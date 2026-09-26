@@ -1,0 +1,21 @@
+# Secrets - never commit
+server/.env
+*.env
+
+# Live data: rebuilt from Cin7 / held on the server, not source
+Outputs/cache/
+Outputs/payment_cache.json
+Outputs/report_payload.json
+Outputs/ledger.db
+Outputs/*.xlsx
+Outputs/*.tmp
+refresh.log
+
+# The team's payment workbook holds supplier payment history - keep it off GitHub
+Reference/*.xlsx
+
+__pycache__/
+*.pyc
+.venv/
+backup/
+.claude/

@@ -1,0 +1,35 @@
+name: payment-request
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    env_file:
+      # CIN7_USER / CIN7_KEY. The SC team's shared read-only Cin7 key is already
+      # on the box for the Shipment Schedule app; reuse it rather than copy it.
+      - ../../shipment-schedule/server/.env
+    environment:
+      TZ: "UTC"
+      SHIPMENT_CACHE: /app/ext/shipment-schedule/shipment_cache.json
+      MASTER_SNAPSHOT: /app/ext/master-data/master_snapshot.json
+    ports:
+      # loopback only - nginx proxies /Applications/payment-request/ -> here.
+      # 8100-8111 are taken by the other SC apps; this app owns 8112.
+      - "127.0.0.1:8112:8080"
+    volumes:
+      # Cache, ledger (people's edits) and outputs survive a rebuild.
+      - ../Outputs:/app/Outputs
+      # Sibling caches, read-only: ETA to port, and supplier payment terms.
+      - /srv/team/sc/shipment-schedule/Outputs:/app/ext/shipment-schedule:ro
+      - /srv/team/sc/master-data/data/cache:/app/ext/master-data:ro
+      # Microsoft Graph creds, to refresh the Supplier and Branch master from SharePoint.
+      - /srv/team/sc/secrets:/app/secrets:ro
+    labels:
+      autoheal: "true"
+    networks:
+      - sclab
+
+networks:
+  sclab:
+    external: true

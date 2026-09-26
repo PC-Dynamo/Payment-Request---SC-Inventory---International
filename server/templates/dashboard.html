@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Payment Request — SC Inventory International</title>
+<script src="vendor/chart.umd.min.js"></script>
+<style>
+:root{
+  --navy:#1b2a4a; --ink:#1c2330; --muted:#6b7688; --line:#e3e7ee; --soft:#f6f8fb;
+  --accent:#2f6fdc; --accent-soft:#eaf1fd;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4;
+  --good:#2e7d52; --good-bg:#e9f6ee; --warn:#b58900; --warn-bg:#fdf7e3;
+  --bad:#a11b1b; --bad-bg:#fbe2e2; --info-bg:#eef4ff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:#fff;color:var(--ink)}
+body{font:13px/1.45 "Segoe UI",Roboto,system-ui,-apple-system,sans-serif}
+a{color:var(--accent)}
+/* Full page width, with breathing room on both sides */
+.wrap{width:100%;padding:16px 28px 60px}
+header.top{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;justify-content:space-between;
+  border-bottom:2px solid var(--navy);padding-bottom:10px;margin-bottom:0}
+header.top h1{margin:0;font-size:20px;color:var(--navy);letter-spacing:-.2px}
+.sub{color:var(--muted);font-size:12px;margin-top:3px}
+.sub b{color:var(--ink);font-weight:600}
+button,.btn{font:inherit;border:1px solid var(--line);background:#fff;color:var(--ink);padding:6px 12px;
+  border-radius:7px;cursor:pointer;text-decoration:none;display:inline-block;white-space:nowrap}
+button:hover,.btn:hover{border-color:var(--accent);color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:hover{filter:brightness(1.08);color:#fff}
+button:disabled{opacity:.5;cursor:default}
+/* tab bar - sticky, carries Refresh / Export so they are always in reach */
+.tabbar{position:sticky;top:0;z-index:5;background:#fff;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;
+  justify-content:space-between;border-bottom:2px solid var(--line);padding-top:10px;margin-bottom:12px}
+.tabs{display:flex;gap:2px}
+.tabs button{border:1px solid var(--line);border-bottom:0;background:#fafbfd;color:var(--muted);border-radius:8px 8px 0 0;
+  padding:8px 18px;font-weight:600;margin-bottom:-2px}
+.tabs button[aria-selected="true"]{background:#fff;color:var(--navy);border-bottom:2px solid #fff;box-shadow:0 -2px 0 var(--accent) inset}
+.actions{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:6px}
+/* filters */
+.filters{border:1px solid var(--line);border-radius:9px;background:var(--soft);padding:9px 12px;margin:0 0 12px;
+  display:flex;flex-direction:column;gap:8px}
+.frow{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+.f{display:flex;gap:6px;align-items:center;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:#fff}
+.seg button{border:0;border-radius:0;padding:4px 10px;font-size:12px;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--navy);color:#fff}
+select,input{font:inherit;border:1px solid var(--line);border-radius:6px;padding:4px 7px;background:#fff;color:var(--ink);font-size:12px}
+.f input[type=date]{width:128px}
+.f select{max-width:230px}
+.f .to{text-transform:none;color:var(--muted)}
+input[type=search]{min-width:200px}
+.fcount{font-size:12px;color:var(--accent);font-weight:600;text-transform:none;letter-spacing:0}
+section{margin:0 0 18px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.7px;color:var(--navy);margin:0 0 8px}
+h2 .hint{text-transform:none;letter-spacing:0;font-weight:400;color:var(--muted);font-size:12px;margin-left:8px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px}
+.kpi{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#fff}
+.kpi .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+.kpi .v{font-size:20px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+.kpi .d{font-size:11.5px;color:var(--muted)}
+.kpi.hl{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.kpi.bad .v{color:var(--bad)}
+/* totals of the filtered list */
+.totals{position:sticky;top:var(--tbh,48px);z-index:4;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;background:var(--accent-soft);
+  border:1px solid #cfdcf6;border-radius:8px;padding:7px 12px;margin:0 0 8px;font-size:12.5px}
+.totals b{font-variant-numeric:tabular-nums;color:var(--navy)}
+.totals .sp{flex:1}
+/* register table: fits the page, text wraps */
+/* No scroll box on a wide screen, so the header row can stick to the page itself */
+.tscroll{border:1px solid var(--line);border-radius:9px}
+@media (max-width:1560px){.tscroll{overflow-x:auto}.reg th{top:0!important}}
+table.reg{border-collapse:separate;border-spacing:0;width:100%;min-width:1480px;table-layout:fixed;font-size:11px}
+.reg th,.reg td{padding:4px 4px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;
+  white-space:normal;overflow-wrap:break-word;word-break:normal}
+.reg td.nw{white-space:nowrap;overflow:hidden;text-overflow:clip;font-size:10.5px;letter-spacing:-.1px}
+.reg .clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.reg th{position:sticky;top:var(--thtop,0);background:#fafbfd;color:var(--navy);font-weight:600;z-index:1;cursor:pointer;user-select:none;
+  font-size:11px;line-height:1.25;vertical-align:bottom}
+.reg th.num,.reg td.num{text-align:right;font-variant-numeric:tabular-nums}
+.reg tr:hover td{background:#fbfcfe}
+.reg tr.manual td:first-child{box-shadow:inset 3px 0 0 var(--s4)}
+.reg tr.grp td{background:var(--soft);font-weight:600;color:var(--navy)}
+.reg tfoot td{background:#fafbfd;font-weight:700;border-top:2px solid var(--line);border-bottom:0}
+.reg td.ed{cursor:text}
+.reg td.ed:hover{outline:1px dashed #b9c7e6;outline-offset:-2px}
+.reg td input,.reg td select{width:100%;font-size:11.5px;padding:2px 3px}
+.od{color:var(--bad);font-weight:700}
+.muted{color:var(--muted)}
+.flag{color:var(--warn);cursor:help}
+.pill{display:inline-block;border-radius:20px;padding:0 7px;font-size:11px;font-weight:600;white-space:nowrap}
+.st-ForPayment{background:var(--info-bg);color:#274b8f}
+.st-Requested{background:var(--warn-bg);color:#7a5c00}
+.st-Paid{background:var(--good-bg);color:var(--good)}
+.st-Forecast,.st-DateTBC{background:#f1f3f7;color:var(--muted)}
+.st-OnHold{background:var(--bad-bg);color:var(--bad)}
+.st-NotPayable{background:#f1f3f7;color:#98a1b0;text-decoration:line-through}
+.icon{border:0;background:none;padding:0 4px;color:var(--muted)}
+.icon:hover{color:var(--accent)}
+.note{font-size:11.5px;color:var(--muted);margin:6px 2px 0}
+/* analysis tab */
+.charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#fff;min-width:0}
+.card h3{margin:0 0 2px;font-size:13.5px;color:var(--navy)}
+.card .cap{color:var(--muted);font-size:11.5px;margin-bottom:8px}
+.cv{position:relative;height:270px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted);margin:0 0 6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+details{border:1px solid var(--line);border-radius:9px;padding:8px 12px;margin-top:10px}
+details summary{cursor:pointer;color:var(--navy);font-weight:600}
+details pre{white-space:pre-wrap;font-size:11.5px;color:var(--muted);margin:8px 0 0}
+.notes li{margin:3px 0}
+table.plain{border-collapse:collapse;width:100%;font-size:12px}
+table.plain th,table.plain td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}
+/* drawer */
+#drawer{position:fixed;top:0;right:0;height:100%;width:min(540px,100%);background:#fff;border-left:1px solid var(--line);
+  box-shadow:-10px 0 30px rgba(20,30,60,.12);transform:translateX(105%);transition:transform .18s;z-index:20;display:flex;flex-direction:column}
+#drawer.open{transform:none}
+#drawer header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+#drawer header h3{margin:0;color:var(--navy);font-size:15px}
+#drawer .body{padding:14px 18px;overflow:auto;flex:1}
+#drawer .foot{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+.form label{display:flex;flex-direction:column;font-size:11.5px;color:var(--muted);gap:3px}
+.form label.full{grid-column:1/-1}
+.form input,.form select,.form textarea{font-size:13px;width:100%}
+.form textarea{font:inherit;border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-height:60px}
+dl.facts{display:grid;grid-template-columns:120px 1fr;gap:4px 10px;margin:0 0 14px;font-size:12.5px}
+dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
+.err{color:var(--bad);font-size:12px}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:8px 16px;
+  border-radius:8px;font-size:12.5px;display:none;z-index:30}
+[hidden]{display:none!important}
+@media (max-width:900px){.charts{grid-template-columns:1fr}.wrap{padding:12px 16px 40px}.form{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Payment Request — SC Inventory International</h1>
+      <div class="sub" id="sub">Loading…</div>
+    </div>
+  </header>
+
+  <div class="tabbar">
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tabReg" aria-selected="true" data-t="reg">Payment Request</button>
+      <button role="tab" id="tabAna" aria-selected="false" data-t="ana">Analysis &amp; Sources</button>
+    </div>
+    <div class="actions">
+      <button id="bAdd" class="primary">+ Add line</button>
+      <button id="bExport" title="Export exactly what the filters show">Export Excel</button>
+      <button id="bRefresh" title="Pull the Cin7 delta and rebuild">Refresh</button>
+    </div>
+  </div>
+
+  <div class="filters" role="group" aria-label="Filters">
+    <div class="frow">
+      <span class="f">Show <span class="seg" id="fWin"></span></span>
+      <span class="f">State <span class="seg" id="fState"></span></span>
+      <span class="f">Channel <span class="seg" id="fSeg"></span></span>
+      <span class="f">Currency <span class="seg" id="fCur"></span></span>
+    </div>
+    <div class="frow">
+      <label class="f">Supplier <select id="fSup"></select></label>
+      <label class="f">Stage <select id="fStage"></select></label>
+      <label class="f">Status <select id="fStatus"></select></label>
+      <label class="f">Payment type <select id="fType"></select></label>
+      <label class="f">Search <input type="search" id="fQ" placeholder="PO, invoice, comment…"></label>
+    </div>
+    <div class="frow">
+      <span class="f">Request date <input type="date" id="fReqF"><span class="to">to</span><input type="date" id="fReqT"></span>
+      <span class="f">ETD <input type="date" id="fEtdF"><span class="to">to</span><input type="date" id="fEtdT"></span>
+      <span class="f">ETA <input type="date" id="fEtaF"><span class="to">to</span><input type="date" id="fEtaT"></span>
+      <button id="bClear">Clear filters</button>
+      <span class="fcount" id="fCount"></span>
+    </div>
+  </div>
+
+  <!-- TAB 1: KPIs + the payment request register -->
+  <div id="pReg">
+    <section><div class="kpis" id="kpis"></div></section>
+    <section>
+      <div class="totals" id="totals"></div>
+      <div class="tscroll"><table class="reg" id="tbl"><colgroup id="cols"></colgroup><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
+      <div class="note">Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount). ✎ opens every field.
+        <label style="margin-left:14px"><input type="checkbox" id="fGroup" checked> Group by request date</label>
+        <button id="bSubmit" disabled style="margin-left:10px">Mark selected as Requested</button></div>
+    </section>
+  </div>
+
+  <!-- TAB 2: charts, sources, change log -->
+  <div id="pAna" hidden>
+    <section>
+      <h2>Payments by request date <span class="hint" id="chartHint"></span></h2>
+      <div class="charts">
+        <div class="card"><h3>USD to suppliers &amp; forwarders</h3><div class="cap">Deposits, balances and freight, by payment request date</div>
+          <div class="legend" id="lgUsd"></div><div class="cv"><canvas id="cUsd"></canvas></div></div>
+        <div class="card"><h3>AUD document &amp; handling charges</h3><div class="cap">Customs brokerage, GST, duty, cartage and other AUD lines</div>
+          <div class="legend" id="lgAud"></div><div class="cv"><canvas id="cAud"></canvas></div></div>
+        <div class="card"><h3 id="hGeo">USD by state</h3><div class="cap" id="capGeo"></div>
+          <div class="legend" id="lgGeo"></div><div class="cv"><canvas id="cGeo"></canvas></div></div>
+        <div class="card"><h3>USD by supplier</h3><div class="cap">Top 10 in the current view</div>
+          <div class="cv"><canvas id="cSup"></canvas></div></div>
+      </div>
+    </section>
+    <section>
+      <details open><summary>Data sources, rules &amp; checks</summary><div id="notes"></div></details>
+      <details id="dAudit"><summary>Change log</summary><div id="audit" class="muted" style="font-size:12px">Open to load…</div></details>
+    </section>
+  </div>
+</div>
+
+<aside id="drawer" aria-hidden="true">
+  <header><h3 id="dTitle">Line</h3><button class="icon" id="dClose" aria-label="Close">✕</button></header>
+  <div class="body" id="dBody"></div>
+  <div class="foot"><span class="err" id="dErr"></span><button id="dDelete" hidden>Delete</button><button id="dCancel">Cancel</button><button class="primary" id="dSave">Save</button></div>
+</aside>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=(n,d=0)=>(n==null||n===""||isNaN(n))?"":Number(n).toLocaleString("en-AU",{minimumFractionDigits:d,maximumFractionDigits:d});
+const money=n=>fmt(n,2);
+const k=n=>{n=Number(n)||0;const a=Math.abs(n);return a>=1e6?(n/1e6).toFixed(2)+"M":a>=1e3?(n/1e3).toFixed(1)+"k":n.toFixed(0)};
+const dd=s=>{if(!s)return"";const[y,m,d]=String(s).slice(0,10).split("-");return `${d}/${m}/${y.slice(2)}`};
+const SER=["--s1","--s2","--s3","--s4","--s5"].map(v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+const CURS=["USD","AUD","GBP","EUR"];
+let DATA=[],META=null,charts={},sortKey=null,sortDir=1,selected=new Set(),TAB="reg",SPECIAL={};
+const F0={win:"window",state:"",seg:"",cur:"",sup:"",stage:"",status:"",type:"",q:"",reqF:"",reqT:"",etdF:"",etdT:"",etaF:"",etaT:""};
+const F={...F0};
+try{Object.assign(F,JSON.parse(localStorage.getItem("prf2")||"{}"));F.q=""}catch(e){}
+function saveF(){try{localStorage.setItem("prf2",JSON.stringify(F))}catch(e){}}
+function toast(t){const e=$("#toast");e.textContent=t;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",2600)}
+async function api(url,opt={}){
+  const r=await fetch(url,{headers:{"Content-Type":"application/json"},credentials:"same-origin",...opt});
+  let j={};try{j=await r.json()}catch(e){}
+  if(!r.ok||j.ok===false)throw new Error(j.error||`HTTP ${r.status}`);
+  return j;
+}
+const statusLabel=r=>r.status_assumed?"Paid (assumed)":r.status;
+const etaOf=r=>r.eta_port||r.eta_cin7||"";
+
+// ------------------------------------------------------------------ filters
+function seg(id,opts,key){
+  const el=$(id);el.innerHTML=opts.map(([v,l])=>`<button type="button" data-v="${esc(v)}" aria-pressed="${F[key]===v}">${esc(l)}</button>`).join("");
+  el.onclick=e=>{const b=e.target.closest("button");if(!b)return;F[key]=b.dataset.v;saveF();
+    el.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b));render()};
+}
+function opts(sel,values,allLabel){const el=$(sel),cur=el.value;
+  el.innerHTML=`<option value="">${esc(allLabel)}</option>`+values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");el.value=values.includes(cur)?cur:"";}
+function payTypes(){
+  const s=new Set([...Object.keys(META.charge_types||{}),...DATA.map(r=>r.pay_type).filter(Boolean)]);
+  return [...s].sort((a,b)=>a.localeCompare(b));
+}
+function suppliers(){
+  const s=new Set();DATA.forEach(r=>{if(r.source==="auto")s.add(r.supplier);else{if(r.vendor_entity)s.add(r.vendor_entity);(r.supplier||"").split(", ").filter(Boolean).forEach(x=>s.add(x))}});
+  return [...s].filter(Boolean).sort((a,b)=>a.localeCompare(b));
+}
+function buildFilters(){
+  seg("#fWin",[["request","This request"],["window",`${META.forecast_weeks}-week rolling`],["open","All unpaid"],["all","All incl. paid"]],"win");
+  seg("#fState",[["","All"],...META.states.map(s=>[s,s])],"state");
+  seg("#fSeg",[["","All"],["Retail","Retail"],["Commercial","Commercial"]],"seg");
+  seg("#fCur",[["","All"],...CURS.map(c=>[c,c])],"cur");
+  fillSelects();
+  const bind=(id,key,ev="change")=>{const el=$(id);el.value=F[key]||"";el.addEventListener(ev,()=>{F[key]=el.value.trim?el.value.trim():el.value;if(key!=="q")saveF();render()})};
+  bind("#fSup","sup");bind("#fStage","stage");bind("#fStatus","status");bind("#fType","type");bind("#fQ","q","input");
+  ["reqF","reqT","etdF","etdT","etaF","etaT"].forEach(x=>bind("#f"+x[0].toUpperCase()+x.slice(1),x));
+  $("#bClear").onclick=()=>{Object.assign(F,F0);saveF();location.reload()};
+}
+function fillSelects(){
+  opts("#fSup",suppliers(),"All suppliers");
+  opts("#fStage",[...new Set(DATA.map(r=>r.stage).filter(Boolean))].sort(),"All stages");
+  opts("#fStatus",["For Payment","Requested","Paid","Paid (assumed)","On Hold","Not Payable","Forecast","Date TBC"],"All statuses");
+  opts("#fType",payTypes(),"All types");
+  ["sup","stage","status","type"].forEach(k2=>{const el=$({sup:"#fSup",stage:"#fStage",status:"#fStatus",type:"#fType"}[k2]);if(F[k2])el.value=F[k2];if(el.value!==F[k2])F[k2]=el.value});
+}
+function inWin(r){
+  if(F.win==="request")return r.this_request;
+  if(F.win==="window")return r.in_window;
+  if(F.win==="open")return !["Paid","Not Payable"].includes(r.status);
+  return true;
+}
+const between=(v,f,t)=>(!f&&!t)||(!!v&&(!f||v>=f)&&(!t||v<=t));
+function passBase(r){  // every filter except the Show window (KPI cards are windows of their own)
+  if(F.state&&r.state!==F.state)return false;
+  if(F.seg&&r.segment!==F.seg)return false;
+  if(F.cur&&r.currency!==F.cur)return false;
+  if(F.sup&&!(r.supplier===F.sup||r.vendor_entity===F.sup||(r.supplier||"").split(", ").includes(F.sup)))return false;
+  if(F.stage&&r.stage!==F.stage)return false;
+  if(F.status&&statusLabel(r)!==F.status)return false;
+  if(F.type&&r.pay_type!==F.type)return false;
+  if(!between(r.request_date,F.reqF,F.reqT))return false;
+  if(!between(r.etd,F.etdF,F.etdT))return false;
+  if(!between(etaOf(r),F.etaF,F.etaT))return false;
+  if(F.q&&![r.po,r.vendor_entity,r.supplier,r.invoice_no,r.branch,r.pay_type,r.comment,r.container].join(" ").toLowerCase().includes(F.q.toLowerCase()))return false;
+  return true;
+}
+const rowsF=()=>DATA.filter(r=>passBase(r)&&inWin(r));
+function activeFilterCount(){return ["state","seg","cur","sup","stage","status","type","q","reqF","reqT","etdF","etdT","etaF","etaT"].filter(x=>F[x]).length}
+
+// ------------------------------------------------------------------ KPIs + totals
+function sum(rows,cur,field="amount"){return rows.filter(r=>r.currency===cur).reduce((a,r)=>a+(+r[field]||0),0)}
+function renderKpis(){
+  const base=DATA.filter(passBase);
+  const req=base.filter(r=>r.in_request),win=base.filter(r=>r.in_window);
+  const waiting=base.filter(r=>r.status==="Requested"),od=base.filter(r=>r.overdue),tbc=base.filter(r=>r.status==="Date TBC");
+  const pos=new Set(base.filter(r=>r.source==="auto"&&!["Paid","Not Payable"].includes(r.status)).map(r=>r.po));
+  const K=[
+    ["hl",`Request ${dd(META.next_request)} · USD`,"$"+fmt(sum(req,"USD")),`${req.filter(r=>r.currency==="USD").length} lines to request`],
+    ["hl",`Request ${dd(META.next_request)} · AUD`,"$"+fmt(sum(req,"AUD")),`${req.filter(r=>r.currency==="AUD").length} lines to request`],
+    ["",`${META.forecast_weeks}-week rolling · USD`,"$"+fmt(sum(win,"USD")),`to ${dd(META.horizon)}`],
+    ["",`${META.forecast_weeks}-week rolling · AUD`,"$"+fmt(sum(win,"AUD")),`${win.filter(r=>r.currency==="AUD").length} AUD lines`],
+    ["","Requested, awaiting payment",`$${k(sum(waiting,"USD"))} USD`,`$${k(sum(waiting,"AUD"))} AUD · ${waiting.length} lines`],
+    [od.length?"bad":"","Overdue",String(od.length),"unpaid lines past due date"],
+    ["","Open POs with unpaid lines",String(pos.size),`${tbc.length} lines with no ETA yet`],
+  ];
+  const other=["GBP","EUR"].map(c=>[c,sum(win,c)]).filter(x=>x[1]);
+  if(other.length)K.push(["",`${META.forecast_weeks}-week · GBP / EUR`,other.map(([c,v])=>`${c} ${k(v)}`).join(" · "),"UK / EU suppliers"]);
+  $("#kpis").innerHTML=K.map(([c,l,v,d])=>`<div class="kpi ${c}"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d)}</div></div>`).join("");
+}
+function renderTotals(rows){
+  const parts=CURS.map(c=>[c,sum(rows,c)]).filter(([c,v])=>v||c==="USD"||c==="AUD");
+  const paid=CURS.map(c=>[c,sum(rows,c,"paid_amount")]).filter(x=>x[1]);
+  const n=activeFilterCount();
+  $("#totals").innerHTML=`<span>${n?`<b>${n}</b> filter${n>1?"s":""} ·`:""} <b>${rows.length}</b> lines</span>`+
+    parts.map(([c,v])=>`<span>${c} <b>${money(v)}</b></span>`).join("")+
+    (paid.length?`<span class="muted">Paid amount: ${paid.map(([c,v])=>`${c} ${money(v)}`).join(" · ")}</span>`:"")+
+    `<span class="sp"></span><span class="muted">${esc(winLabel())}</span>`;
+  $("#fCount").textContent=n?`${n} filter${n>1?"s":""} active`:"";
+}
+const winLabel=()=>({request:`This request (${dd(META.next_request)})`,window:`${META.forecast_weeks}-week rolling to ${dd(META.horizon)}`,open:"All unpaid",all:"All lines incl. paid"})[F.win];
+
+// ------------------------------------------------------------------ register
+// [key, header, relative width, kind, editable-field]
+const ALLCOLS=[   // [key, header, width weight (px at ~1700 wide), kind, editable field]
+  ["sel","",18],
+  ["entry_date","Entry Date",58,"date"],
+  ["vendor_entity","Vendor Entity Name",100,"text","vendor_entity"],
+  ["supplier","Supplier Name",86,"text"],
+  ["po","PO Number",66,"text"],
+  ["invoice_no","Document / Invoice No.",68,"text","invoice_no"],
+  ["branch","Branch",74,"text"],
+  ["state","State",32],
+  ["segment","Retail / Comm.",46],
+  ["stage","Stage",58],
+  ["etd","ETD",58,"date"],
+  ["eta_port","ETA (Forwarder)",58,"date"],
+  ["eta_cin7","ETA (CIN7)",52,"date"],
+  ["container_size","Container Size",42],
+  ["pay_type","Payment Type",74,"select","pay_type"],
+  ["status","Payment Status",74,"status","status"],
+  ["request_date","Payment Request Date",58,"date","request_date"],
+  ["due_date","Due Date",58,"date","due_date"],
+  ["acc_scheduled_date","Accounts Scheduled Payment Date",60,"date","acc_scheduled_date"],
+  ["USD","Value (USD)",72,"money","amount"],
+  ["AUD","Value (AUD)",66,"money","amount"],
+  ["GBP","Value (GBP)",60,"money","amount"],
+  ["EUR","Value (EUR)",56,"money","amount"],
+  ["paid_date","Paid Date",58,"date","paid_date"],
+  ["paid_amount","Paid Amount",66,"money","paid_amount"],
+  ["comment","Comment",104,"text","comment"],
+  ["container_number","Container Number",70,"text"],
+  ["pct","%",28],
+  ["edit","",20],
+];
+let COLS=ALLCOLS;
+function cin7Link(r){
+  const t=META.cin7_url_template;if(!t||!r.cin7_id||r.source!=="auto")return esc(r.po);
+  return `<a href="${esc(t.replace("{id}",encodeURIComponent(r.cin7_id)).replace("{ref}",encodeURIComponent(r.po)))}" target="_blank" rel="noopener">${esc(r.po)}</a>`;
+}
+function editable(r,c){
+  if(!c[4])return false;
+  if(CURS.includes(c[0]))return r.currency===c[0];     // amount edits live in the line's own currency column
+  return true;
+}
+function cell(r,c){
+  const key=c[0];
+  switch(key){
+    case "sel": return r.status==="For Payment"?`<input type="checkbox" class="sel" data-id="${esc(r.line_id)}" ${selected.has(r.line_id)?"checked":""} aria-label="select">`:"";
+    case "vendor_entity": return `${esc(r.vendor_entity)}${r.flags&&r.flags.length?` <span class="flag" title="${esc(r.flags.join("\n"))}">⚠</span>`:""}`;
+    case "po": return cin7Link(r);
+    case "etd": return esc(dd(r.etd))+(r.etd_estimated&&r.etd?'<span class="muted" title="estimated from ETA and transit time">*</span>':"");
+    case "due_date": return `<span class="${r.overdue?"od":""}" title="${esc(r.due_overridden?"due date set by hand":(r.terms_rule||""))}">${esc(dd(r.due_date))||'<span class="muted">TBC</span>'}</span>`;
+    case "status": return `<span class="pill st-${esc(String(r.status).replace(/\s+/g,""))}" title="${esc(r.assumed_paid||"")}">${esc(statusLabel(r))}</span>`;
+    case "USD":case "AUD":case "GBP":case "EUR":
+      return r.currency===key?money(r.amount)+(r.source==="auto"&&!r.amount_overridden&&!r.usd_exact&&key==="USD"?' <span class="muted" title="estimated USD - enter the invoice amount">~</span>':""):"";
+    case "paid_amount": return money(r.paid_amount);
+    case "pct": return r.pct!=null?fmt(r.pct,0)+"%":"";
+    case "edit": return `<button class="icon ed" data-id="${esc(r.line_id)}" title="All fields / details">✎</button>`;
+    default: return c[3]==="date"?esc(dd(r[key])):esc(r[key]);
+  }
+}
+function sortVal(r,key){
+  if(CURS.includes(key))return r.currency===key?+r.amount:-Infinity;
+  if(key==="paid_amount"||key==="pct")return r[key]==null?-Infinity:+r[key];
+  if(key==="status")return statusLabel(r);
+  return r[key]??"";
+}
+let VIEW=[];
+function renderTable(){
+  let rows=rowsF();
+  if(sortKey)rows=[...rows].sort((a,b)=>{const x=sortVal(a,sortKey),y=sortVal(b,sortKey);return (x>y?1:x<y?-1:0)*sortDir});
+  VIEW=rows;
+  // GBP / EUR columns only when the view has lines in that currency.
+  COLS=ALLCOLS.filter(c=>!["GBP","EUR"].includes(c[0])||rows.some(r=>r.currency===c[0]));
+  const tw=COLS.reduce((a,c)=>a+c[2],0);
+  $("#cols").innerHTML=COLS.map(c=>`<col style="width:${(c[2]/tw*100).toFixed(3)}%">`).join("");
+  $("#tbl thead").innerHTML="<tr>"+COLS.map(c=>`<th data-k="${c[0]}" class="${c[3]==="money"?"num":""}">${esc(c[1])}${sortKey===c[0]?(sortDir>0?" ▲":" ▼"):""}</th>`).join("")+"</tr>";
+  const group=$("#fGroup").checked&&!sortKey;
+  const gname=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.request_date?`Request ${dd(x.request_date)}${x.request_date===META.next_request?" (next)":""}`:"Date TBC — no ETA yet";
+  const gtot={};if(group)rows.forEach(x=>{const g=gname(x);(gtot[g]=gtot[g]||[]).push(x)});
+  let html="",last=null;
+  for(const r of rows){
+    if(group){const g=gname(r);if(g!==last){const gr=gtot[g];
+      html+=`<tr class="grp"><td colspan="${COLS.length}">${esc(g)} · ${gr.length} lines · `+CURS.map(c=>[c,sum(gr,c)]).filter(x=>x[1]).map(([c,v])=>`${c} ${money(v)}`).join(" · ")+`</td></tr>`;last=g}}
+    html+=`<tr class="${r.source==="manual"?"manual":""}" data-id="${esc(r.line_id)}">`+COLS.map(c=>{
+      const ed=editable(r,c);
+      const cls=(c[3]==="money"?"num nw ":c[3]==="date"?"nw ":"")+(ed?"ed":"");
+      const inner=c[3]==="text"?`<div class="clamp" title="${esc(r[c[0]]||"")}">${cell(r,c)}</div>`:cell(r,c);
+      return `<td class="${cls}" ${ed?`data-f="${c[4]}" data-k="${c[0]}"`:""}>${inner}</td>`}).join("")+"</tr>";
+  }
+  $("#tbl tbody").innerHTML=html||`<tr><td colspan="${COLS.length}" class="muted" style="padding:24px;text-align:center">No payment lines match these filters.</td></tr>`;
+  // footer totals under each currency column
+  $("#tbl tfoot").innerHTML="<tr>"+COLS.map(c=>{
+    if(c[0]==="entry_date")return `<td colspan="1">Total</td>`;
+    if(CURS.includes(c[0]))return `<td class="num">${money(sum(rows,c[0]))}</td>`;
+    if(c[0]==="paid_amount")return `<td class="num">${money(rows.reduce((a,r)=>a+(+r.paid_amount||0),0))}</td>`;
+    if(c[0]==="vendor_entity")return `<td>${rows.length} lines</td>`;
+    return "<td></td>"}).join("")+"</tr>";
+  renderTotals(rows);updSubmit();
+}
+// sorting, selection, drawer
+$("#tbl").addEventListener("click",e=>{
+  const th=e.target.closest("th");
+  if(th&&th.dataset.k&&!["sel","edit"].includes(th.dataset.k)){const kk=th.dataset.k;if(sortKey===kk){sortDir=-sortDir;if(sortDir>0)sortKey=null}else{sortKey=kk;sortDir=1}renderTable();return}
+  const ed=e.target.closest(".ed");if(ed&&ed.tagName==="BUTTON"){openLine(ed.dataset.id);return}
+  const b=e.target.closest("button.ed");if(b){openLine(b.dataset.id);return}
+  const td=e.target.closest("td.ed");if(td&&!td.querySelector("input,select")&&!e.target.closest("a"))startEdit(td);
+});
+$("#tbl").addEventListener("change",e=>{
+  if(e.target.classList.contains("sel")){e.target.checked?selected.add(e.target.dataset.id):selected.delete(e.target.dataset.id);updSubmit()}
+});
+// ---- inline edit
+function startEdit(td){
+  const id=td.parentElement.dataset.id,f=td.dataset.f,key=td.dataset.k;
+  const r=DATA.find(x=>x.line_id===id);if(!r)return;
+  const col=ALLCOLS.find(c=>c[0]===key),kind=col[3];
+  let v=f==="amount"?r.amount:(f==="status"?(r.status_stored||""):r[f]);
+  if(f==="request_date")v=r.request_stored||r.request_date||"";
+  if(f==="due_date")v=r.due_date||"";
+  let ctl;
+  if(kind==="status"){
+    ctl=`<select>${["","For Payment","Requested","Paid","On Hold","Not Payable"].map(o=>`<option value="${o}" ${o===v?"selected":""}>${o||"(automatic)"}</option>`).join("")}</select>`;
+  }else if(kind==="select"){
+    ctl=`<select>${payTypes().map(o=>`<option ${o===v?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
+  }else if(kind==="date"){ctl=`<input type="date" value="${esc(v||"")}">`}
+  else if(kind==="money"){ctl=`<input type="number" step="0.01" value="${esc(v??"")}">`}
+  else ctl=`<input type="text" value="${esc(v||"")}">`;
+  td.innerHTML=ctl;const el=td.firstElementChild;el.focus();
+  let done=false;
+  const finish=async save=>{
+    if(done)return;done=true;
+    const nv=el.value;
+    if(!save||String(nv)===String(v??"")){renderTable();return}
+    try{await api("api/line",{method:"POST",body:JSON.stringify({line_id:id,changes:{[f]:nv}})});toast("Saved");await load(false)}
+    catch(err){toast("Not saved: "+err.message);renderTable()}
+  };
+  el.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();finish(true)}if(e.key==="Escape"){e.preventDefault();finish(false)}});
+  el.addEventListener("blur",()=>finish(true));
+  if(el.tagName==="SELECT")el.addEventListener("change",()=>finish(true));
+}
+$("#fGroup").onchange=renderTable;
+function updSubmit(){const n=[...selected].filter(id=>DATA.some(r=>r.line_id===id&&r.status==="For Payment")).length;
+  $("#bSubmit").disabled=!n;$("#bSubmit").textContent=n?`Mark ${n} selected as Requested`:"Mark selected as Requested"}
+$("#bSubmit").onclick=async()=>{
+  const ids=[...selected];if(!ids.length)return;
+  if(!confirm(`Mark ${ids.length} line(s) as Requested for ${dd(META.next_request)}?`))return;
+  try{const j=await api("api/submit-request",{method:"POST",body:JSON.stringify({line_ids:ids})});selected.clear();toast(`${j.requested} lines marked Requested`);await load(false)}
+  catch(err){toast("Not saved: "+err.message)}
+};
+
+// ------------------------------------------------------------------ drawer
+let CUR=null;
+function field(name,label,val,type="text",options=null,full=false){
+  const v=val??"";
+  if(options)return `<label class="${full?"full":""}">${esc(label)}<select name="${name}">${options.map(o=>{const[ov,ol]=Array.isArray(o)?o:[o,o];return `<option value="${esc(ov)}" ${String(ov)===String(v)?"selected":""}>${esc(ol)}</option>`}).join("")}</select></label>`;
+  if(type==="textarea")return `<label class="full">${esc(label)}<textarea name="${name}">${esc(v)}</textarea></label>`;
+  return `<label class="${full?"full":""}">${esc(label)}<input name="${name}" type="${type}" value="${esc(v)}" ${type==="number"?'step="0.01"':""} ${name==="po_refs"?'list="poList"':""}></label>`;
+}
+function openDrawer(title,html,isManual){$("#dTitle").textContent=title;$("#dBody").innerHTML=html;$("#dErr").textContent="";
+  $("#dDelete").hidden=!isManual;$("#drawer").classList.add("open");$("#drawer").setAttribute("aria-hidden","false")}
+function closeDrawer(){$("#drawer").classList.remove("open");$("#drawer").setAttribute("aria-hidden","true");CUR=null}
+$("#dClose").onclick=closeDrawer;$("#dCancel").onclick=closeDrawer;
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#drawer").classList.contains("open"))closeDrawer()});
+const ST=["","For Payment","Requested","Paid","On Hold","Not Payable"].map(s=>[s,s||"(automatic)"]);
+function poDatalist(){return `<datalist id="poList">${[...new Set(DATA.filter(r=>r.source==="auto").map(r=>r.po))].sort().map(p=>`<option value="${esc(p)}">`).join("")}</datalist>`}
+function typeOptions(cur){const t=payTypes();if(cur&&!t.includes(cur))t.unshift(cur);return t}
+function openLine(id){
+  const r=DATA.find(x=>x.line_id===id);if(!r)return;CUR={mode:r.source==="manual"?"manual":"auto",id};
+  const facts=r.source==="auto"?`<dl class="facts">
+    <dt>PO value</dt><dd>USD ${money(r.po_value_usd)} ${r.usd_exact?"":"<span class='muted'>(estimated)</span>"} · AUD ${money(r.po_value_aud)} (Cin7)</dd>
+    <dt>Line</dt><dd>${esc(r.pct)}% = USD ${money(r.amount_auto)} (auto)</dd>
+    <dt>Payment terms</dt><dd>${esc(r.terms_text||"—")}<br><span class="muted">${esc(r.terms_rule)} · ${esc(r.terms_source)}</span></dd>
+    <dt>Due (auto)</dt><dd>${esc(dd(r.due_auto))||"TBC — no ETA"} <span class="muted">from ${esc(r.due_anchor)}</span></dd>
+    <dt>Stage</dt><dd>${esc(r.stage)}${r.delay_days?` · ${r.delay_days} days late vs first ETA`:""}</dd>
+    <dt>Container</dt><dd>${esc(r.container)||"—"} ${r.forwarder?"· "+esc(r.forwarder):""}</dd>
+    <dt>Branch</dt><dd>${esc(r.branch)} (${esc(r.state)}) · ${esc(r.segment)}${r.segment_mixed?" (mixed PO)":""}</dd>
+    ${r.assumed_paid?`<dt>Assumed</dt><dd>${esc(r.assumed_paid)}</dd>`:""}
+    ${r.flags.length?`<dt>Checks</dt><dd class="flag">${r.flags.map(esc).join("<br>")}</dd>`:""}
+    ${r.updated_by?`<dt>Last edit</dt><dd>${esc(r.updated_by)} · ${esc(r.updated_at)}</dd>`:""}</dl>`:
+    `<dl class="facts"><dt>Added by</dt><dd>${esc(r.created_by||"")}</dd>${r.updated_by?`<dt>Last edit</dt><dd>${esc(r.updated_by)} · ${esc(r.updated_at)}</dd>`:""}</dl>`;
+  const form=r.source==="auto"?`<div class="form">
+      ${field("pay_type","Payment type",r.pay_type,"",typeOptions(r.pay_type))}
+      ${field("status","Status (blank = automatic)",r.status_stored,"",ST)}
+      ${field("vendor_entity","Vendor entity name",r.vendor_entity)}
+      ${field("invoice_no","Document / invoice no.",r.invoice_no)}
+      ${field("amount","Amount (blank = auto)",r.amount_overridden?r.amount:"","number")}
+      ${field("currency","Currency",r.currency,"",META.currencies)}
+      ${field("due_date","Due date (blank = from terms)",r.due_overridden?r.due_date:"","date")}
+      ${field("request_date","Payment request date (blank = auto)",r.request_stored,"date")}
+      ${field("acc_scheduled_date","Accounts scheduled payment date",r.acc_scheduled_date,"date")}
+      ${field("paid_date","Paid date",r.paid_date,"date")}
+      ${field("paid_amount","Paid amount",r.paid_amount,"number")}
+      ${field("comment","Comment",r.comment,"textarea")}</div>`:manualForm(r);
+  openDrawer(`${r.po||"Manual line"} — ${r.pay_type}`,facts+form,r.source==="manual");
+}
+function manualForm(r){
+  r=r||{};
+  return poDatalist()+`<div class="form">
+    ${field("pay_type","Payment type",r.pay_type||"Customs Brokerage","",typeOptions(r.pay_type))}
+    ${field("currency","Currency",r.currency||"AUD","",META.currencies)}
+    ${field("vendor","Vendor entity / service provider",r.vendor_entity)}
+    ${field("po_refs","PO number(s)",r.source==="manual"?r.po:"")}
+    ${field("invoice_no","Document / invoice no.",r.invoice_no)}
+    ${field("amount","Amount",r.amount,"number")}
+    ${field("due_date","Due date",r.due_date,"date")}
+    ${field("request_date","Payment request date (blank = auto)",r.request_stored||"","date")}
+    ${field("acc_scheduled_date","Accounts scheduled payment date",r.acc_scheduled_date,"date")}
+    ${field("status","Status (blank = automatic)",r.status_stored||"","",ST)}
+    ${field("paid_date","Paid date",r.paid_date,"date")}
+    ${field("paid_amount","Paid amount",r.paid_amount,"number")}
+    ${field("state","State (blank = from PO)",r.source==="manual"?r.state:"","",["",...META.states])}
+    ${field("segment","Channel (blank = from PO)",r.source==="manual"?r.segment:"","",["","Retail","Commercial"])}
+    ${field("branch","Branch (blank = from PO)",r.source==="manual"?r.branch:"","text",null,true)}
+    ${field("comment","Comment",r.comment,"textarea")}</div>
+    <p class="muted" style="font-size:11.5px">Several POs: separate with commas. Branch, state and channel come from the first PO when left blank.</p>`;
+}
+$("#bAdd").onclick=()=>{CUR={mode:"new"};openDrawer("Add payment line (AUD charge, freight, other)",manualForm(null),false);
+  const t=$("#dBody select[name=pay_type]"),c=$("#dBody select[name=currency]");t.onchange=()=>{if(META.charge_types[t.value])c.value=META.charge_types[t.value]}};
+function formData(){const o={};$("#dBody").querySelectorAll("input,select,textarea").forEach(e=>{if(e.name)o[e.name]=e.value});return o}
+$("#dSave").onclick=async()=>{
+  if(!CUR)return;const d=formData();$("#dErr").textContent="";
+  try{
+    if(CUR.mode==="new"){d.doc_no=d.invoice_no;delete d.invoice_no;const j=await api("api/manual",{method:"POST",body:JSON.stringify(d)});toast(`Line ${j.line_id} added`)}
+    else{if(CUR.mode==="manual"){d.doc_no=d.invoice_no;delete d.invoice_no}
+      await api("api/line",{method:"POST",body:JSON.stringify({line_id:CUR.id,changes:d})});toast("Saved")}
+    closeDrawer();await load(false);
+  }catch(err){$("#dErr").textContent=err.message}
+};
+$("#dDelete").onclick=async()=>{
+  if(!CUR||CUR.mode!=="manual"||!confirm("Delete this manual line? It stays in the change log."))return;
+  try{await api("api/manual/"+CUR.id.slice(1),{method:"DELETE"});toast("Line deleted");closeDrawer();await load(false)}catch(err){$("#dErr").textContent=err.message}
+};
+
+// ------------------------------------------------------------------ analysis tab
+function legend(id,items){$(id).innerHTML=items.map(([l,c])=>`<span><i style="background:${c}"></i>${esc(l)}</span>`).join("")}
+function mk(id,cfg){if(charts[id])charts[id].destroy();charts[id]=new Chart($(id),cfg)}
+const tipMoney=cur=>({callbacks:{label:c=>`${c.dataset.label||c.label}: ${cur} ${money(c.parsed.y??c.parsed.x)}`}});
+const baseOpts=(stacked,horizontal)=>({responsive:true,maintainAspectRatio:false,animation:false,
+  indexAxis:horizontal?"y":"x",interaction:{mode:"nearest",intersect:true},plugins:{legend:{display:false}},
+  // Only the value axis gets a formatter: `callback: undefined` would blank the category labels.
+  scales:{x:{stacked,grid:{display:horizontal,color:"#eef0f4"},ticks:{color:"#6b7688",font:{size:11},...(horizontal?{callback:v=>k(v)}:{})}},
+          y:{stacked,grid:{display:!horizontal,color:"#eef0f4"},border:{display:false},ticks:{color:"#6b7688",font:{size:11},...(horizontal?{}:{callback:v=>k(v)})}}}});
+const bar=(label,data,color)=>({label,data,backgroundColor:color,borderColor:"#fff",borderWidth:{top:2,bottom:0,left:0,right:0},borderRadius:4,borderSkipped:"bottom",maxBarThickness:46});
+function renderCharts(){
+  if(TAB!=="ana")return;
+  const rows=rowsF().filter(r=>!["Paid","Not Payable"].includes(r.status));
+  const dates=[...new Set(rows.filter(r=>r.request_date).map(r=>r.request_date))].sort(),lab=dates.map(dd);
+  $("#chartHint").textContent=`${F.state||"All states"} · ${F.seg||"Retail + Commercial"} · ${winLabel()}${activeFilterCount()?` · ${activeFilterCount()} filters`:""}`;
+  const U=[["Deposits",r=>r.kind==="deposit"],["Balance / full payment",r=>r.kind==="balance"||r.kind==="full"],["Freight & other USD",r=>r.source==="manual"]];
+  const usd=rows.filter(r=>r.currency==="USD");
+  mk("#cUsd",{type:"bar",data:{labels:lab,datasets:U.map(([l,f],i)=>bar(l,dates.map(d=>usd.filter(r=>r.request_date===d&&f(r)).reduce((a,r)=>a+r.amount,0)),SER[i]))},
+    options:{...baseOpts(true),plugins:{legend:{display:false},tooltip:tipMoney("USD")}}});
+  legend("#lgUsd",U.map(([l],i)=>[l,SER[i]]));
+  const aud=rows.filter(r=>r.currency==="AUD");
+  const TY=["Customs Brokerage","GST Payment","Government Duty","Cartage"];
+  const grp=r=>TY.includes(r.pay_type)?r.pay_type:(r.pay_type==="Local Cartage Delivery"?"Cartage":"Other AUD");
+  const A=[...TY,"Other AUD"];
+  mk("#cAud",{type:"bar",data:{labels:lab,datasets:A.map((l,i)=>bar(l,dates.map(d=>aud.filter(r=>r.request_date===d&&grp(r)===l).reduce((a,r)=>a+r.amount,0)),SER[i]))},
+    options:{...baseOpts(true),plugins:{legend:{display:false},tooltip:tipMoney("AUD")}}});
+  legend("#lgAud",A.map((l,i)=>[l,SER[i]]));
+  const byKey=F.state?(r=>r.branch||"(no branch)"):(r=>r.state||"(no state)");
+  const keys=F.state?[...new Set(usd.map(byKey))].sort():[...META.states,...(usd.some(r=>!r.state)?["(no state)"]:[])];
+  const segs=F.seg?[F.seg]:["Retail","Commercial"];
+  $("#hGeo").textContent=F.state?`USD by branch — ${F.state}`:"USD by state";
+  $("#capGeo").textContent=F.seg?`${F.seg} only`:"Retail and Commercial stacked";
+  mk("#cGeo",{type:"bar",data:{labels:keys,datasets:segs.map(s=>bar(s,keys.map(kk=>usd.filter(r=>byKey(r)===kk&&r.segment===s).reduce((a,r)=>a+r.amount,0)),SER[s==="Retail"?0:1]))},
+    options:{...baseOpts(true,true),plugins:{legend:{display:false},tooltip:tipMoney("USD")}}});
+  legend("#lgGeo",segs.map(s=>[s,SER[s==="Retail"?0:1]]));
+  const sup={};usd.filter(r=>r.source==="auto").forEach(r=>sup[r.supplier]=(sup[r.supplier]||0)+r.amount);
+  const top=Object.entries(sup).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  mk("#cSup",{type:"bar",data:{labels:top.map(x=>x[0].length>28?x[0].slice(0,27)+"…":x[0]),datasets:[bar("USD",top.map(x=>x[1]),SER[0])]},
+    options:{...baseOpts(false,true),plugins:{legend:{display:false},tooltip:tipMoney("USD")}}});
+}
+function renderNotes(){
+  const m=META,s=m.stats||{};
+  const li=a=>a.filter(Boolean).map(x=>`<li>${x}</li>`).join("");
+  $("#notes").innerHTML=`<ul class="notes">${li([
+    `<b>Cin7</b> (read-only): cache built ${esc(m.cache_built_awst)} (${esc(m.cache_mode)}, ${esc(m.cin7_calls)} API calls). Only POs modified since the last run are pulled.`,
+    `<b>ETA to port</b>: Shipment Schedule cache built ${esc(m.shipment&&m.shipment.generated_awst)} (${esc(m.shipment&&m.shipment.status)}). Forwarder ETA is used; Cin7 ETA when there is none.`,
+    `<b>Payment terms</b>: SC Master Data, snapshot ${esc(m.terms&&m.terms.snapshot_generated)}; re-read weekly (${esc(m.terms&&m.terms.status)}).`,
+    `<b>Supplier &amp; Branch master</b>: ${esc(m.master&&m.master.status)}, file date ${esc(m.master&&m.master.file_date)}.`,
+    `<b>Scope</b>: ${s.open_pos} open international POs; ${s.bulk_excluded} China-stock bulk orders excluded (no vessel / ETA yet). Requests go out Tuesday and Friday; a line joins the last request day on or before its due date.`,
+    `<b>USD</b>: Cin7 holds POs in landed AUD, so USD = qty × Cin7 costUSD, pinned per PO line when first seen. Values marked ~ are estimated — enter the invoice amount to override.`,
+    `<b>Paid (assumed)</b>: deposits of POs already in production, and pre-shipment payments of POs on the water, until someone records otherwise.`,
+    `<b>Filters</b>: ETA filters on the forwarder ETA, or the Cin7 ETA when there is none. Totals and the Excel export follow every filter.`,
+    s.no_terms&&s.no_terms.length?`<b>No payment terms in master-data</b> (defaulted to full payment 7 days before ETA): ${s.no_terms.map(esc).join(", ")}.`:"",
+    m.unmapped_skus&&m.unmapped_skus.length?`<b>SKUs not in the master</b> after re-reading it: ${m.unmapped_skus.map(esc).join(", ")}.`:"",
+    m.unknown_suppliers&&m.unknown_suppliers.length?`<b>Suppliers not in the master</b>: ${m.unknown_suppliers.map(esc).join(", ")}.`:"",
+  ])}</ul>
+  <details><summary>Special arrangements (override master-data)</summary><pre>${esc(JSON.stringify(SPECIAL,null,1))}</pre></details>
+  <details><summary>Last refresh log</summary><pre>${esc((m.run_log||[]).join("\n"))}</pre></details>`;
+}
+$("#dAudit").addEventListener("toggle",async e=>{
+  if(!e.target.open)return;
+  try{const a=await (await fetch("api/audit",{cache:"no-store"})).json();
+    $("#audit").innerHTML=a.length?`<table class="plain"><tr><th>When (AWST)</th><th>Who</th><th>What</th><th>Line</th><th>Change</th></tr>${a.map(x=>`<tr><td>${esc(x.at)}</td><td>${esc(x.who)}</td><td>${esc(x.action)}</td><td>${esc(x.line_id)}</td><td>${esc((x.detail||"").slice(0,160))}</td></tr>`).join("")}</table>`:"No edits yet."}
+  catch(err){$("#audit").textContent="Could not load: "+err.message}
+});
+
+// ------------------------------------------------------------------ tabs, export, refresh
+function setTab(t){TAB=t;$("#tabReg").setAttribute("aria-selected",t==="reg");$("#tabAna").setAttribute("aria-selected",t==="ana");
+  $("#pReg").hidden=t!=="reg";$("#pAna").hidden=t!=="ana";try{localStorage.setItem("prtab",t)}catch(e){}if(t==="ana")renderCharts()}
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>setTab(b.dataset.t));
+$("#bExport").onclick=()=>{
+  const rows=VIEW;                      // exactly what the register lists, in its order
+  if(!rows.length){toast("Nothing to export with these filters");return}
+  const f=document.createElement("form");f.method="POST";f.action="export.xlsx";f.style.display="none";
+  const add=(n,v)=>{const i=document.createElement("input");i.name=n;i.value=v;f.appendChild(i)};
+  add("line_ids",JSON.stringify(rows.map(r=>r.line_id)));
+  const bits=[winLabel(),F.state||"all states",F.seg||"Retail + Commercial",F.cur,F.sup,F.stage,F.status,F.type,
+    F.reqF||F.reqT?`request ${F.reqF||"…"}–${F.reqT||"…"}`:"",F.etdF||F.etdT?`ETD ${F.etdF||"…"}–${F.etdT||"…"}`:"",F.etaF||F.etaT?`ETA ${F.etaF||"…"}–${F.etaT||"…"}`:"",F.q?`search "${F.q}"`:""];
+  add("label",bits.filter(Boolean).join(" · "));
+  document.body.appendChild(f);f.submit();f.remove();
+};
+$("#bRefresh").onclick=async()=>{
+  if(!confirm("Pull the latest Cin7 changes and rebuild the report? Takes about a minute."))return;
+  const b=$("#bRefresh");b.disabled=true;b.textContent="Refreshing…";
+  try{await api("api/refresh",{method:"POST",body:"{}"})}catch(err){toast(err.message)}
+  const poll=async()=>{let s={};try{s=await (await fetch("api/refresh/status",{cache:"no-store"})).json()}catch(e){}
+    if(s.running){setTimeout(poll,4000);return}
+    b.disabled=false;b.textContent="Refresh";toast(s.ok?"Refreshed from Cin7":"Refresh failed — see log");
+    if(s.ok===false)alert((s.log||[]).slice(-15).join("\n"));await load(false)};
+  setTimeout(poll,4000);
+};
+
+function stick(){  // tab bar, totals strip and table header stack while scrolling
+  const tb=$(".tabbar").offsetHeight,tt=$("#totals").offsetHeight;
+  document.documentElement.style.setProperty("--tbh",tb+"px");
+  document.documentElement.style.setProperty("--thtop",(tb+tt)+"px");
+}
+addEventListener("resize",stick);
+function render(){renderKpis();renderTable();renderCharts();stick()}
+async function load(first=true){
+  try{
+    const r=await fetch("api/data",{cache:"no-store"});const j=await r.json();
+    if(!r.ok)throw new Error(j.error||r.status);
+    DATA=j.rows;META=j.meta;SPECIAL=j.special_arrangements||{};
+    $("#sub").innerHTML=`Next payment request <b>${esc(dd(META.next_request))}</b> · refreshed ${esc(META.report_built_awst)} · ETA from Shipment Schedule ${esc(META.shipment&&META.shipment.generated_awst||"—")} · auto-refresh Tue &amp; Fri 07:00 AWST`;
+    if(first){buildFilters();let t="reg";try{t=localStorage.getItem("prtab")||"reg"}catch(e){}setTab(t)}else fillSelects();
+    render();renderNotes();
+  }catch(err){$("#sub").textContent="Could not load the report: "+err.message}
+}
+load();
+</script>
+</body>
+</html>

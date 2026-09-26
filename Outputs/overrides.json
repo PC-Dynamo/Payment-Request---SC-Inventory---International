@@ -1,0 +1,34 @@
+{
+ "_about": "Operator settings. Committed to git: these are real content, not build output. Payment terms themselves come from master-data; only exceptions live here.",
+ "special_arrangements": {
+  "Qingdao CSP Industry and Trade Co.,ltd": {
+   "deposit_pct": 30,
+   "anchor": "eta",
+   "offset_days": -14,
+   "rule": "30% deposit on PO date; 70% balance 14 days prior to arrival (special arrangement)"
+  },
+  "Watson Gym Equipment": {
+   "deposit_pct": 25,
+   "anchor": "etd",
+   "offset_days": -7,
+   "rule": "25% deposit on PO date; 75% balance before shipment - 7 days before ETD (from the payment workbook: Watson has no terms in master-data)"
+  }
+ },
+ "term_aliases": {
+  "Rizhao Land Sea Fitness Goods Ltd": "Rizhao Land Sea Fitness Goods Ltd (CKB)",
+  "Xiamen K-Life Sport Co": "KLife",
+  "Xiamen K-Life": "KLife",
+  "Zibo Solidman Fitness Equipment Co Ltd": "BODYLONGER FITNESS EQUIPMENT CO.,LTD",
+  "Xiamen K-Life Sport Co., Ltd": "KLife"
+ },
+ "transit_weeks": {
+  "NSW": 5,
+  "QLD": 4,
+  "SA": 7,
+  "VIC": 4,
+  "WA": 6
+ },
+ "transit_note": "China port to AU port, upper bound of the Shipment Schedule transit remark. Used only to estimate an ETD when Cin7 has none.",
+ "forecast_weeks": 4,
+ "cin7_url_template": "https://go.cin7.com/Cloud/TransactionEntry/TransactionEntry.aspx?idCustomerAppsLink=89820&OrderId={id}"
+}
