@@ -30,5 +30,9 @@
  },
  "transit_note": "China port to AU port, upper bound of the Shipment Schedule transit remark. Used only to estimate an ETD when Cin7 has none.",
  "forecast_weeks": 4,
- "cin7_url_template": "https://go.cin7.com/Cloud/TransactionEntry/TransactionEntry.aspx?idCustomerAppsLink=89820&OrderId={id}"
+ "cin7_url_template": "https://go.cin7.com/Cloud/TransactionEntry/TransactionEntry.aspx?idCustomerAppsLink=89820&OrderId={id}",
+ "bulk_deposit_suppliers": [
+  "Xiamen K-Life Sport Co., Ltd"
+ ],
+ "bulk_note": "K-Life: the deposit is paid on the bulk (China stock) order and allocated to the shipment POs. Kpower, Iron Master, Bodylonger and Imbell bulk orders need no payment."
 }

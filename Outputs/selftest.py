@@ -143,8 +143,9 @@ def test_data():
     cache = json.loads(cache_p.read_text(encoding="utf-8"))
     payload = json.loads(payload_p.read_text(encoding="utf-8"))
     auto = payload["auto_lines"]
+    bulk_listed = {ln["po"] for ln in auto if ln.get("bulk")}
     open_pos = {r for r, p in cache["pos"].items()
-                if p["is_open"] and p["stage_raw"] not in P.BULK_STAGES}
+                if p["is_open"] and p["stage_raw"] not in P.BULK_STAGES} | bulk_listed
     listed = {ln["po"] for ln in auto}
     check(open_pos == listed, f"every open PO has payment lines ({len(open_pos ^ listed)} differ)")
     by_po: dict[str, float] = {}
@@ -153,9 +154,10 @@ def test_data():
         check(ln["amount_auto"] >= 0, f"{ln['line_id']} negative amount")
         check(ln["state"] in ("NSW", "VIC", "QLD", "WA", "SA", ""), f"{ln['line_id']} bad state {ln['state']}")
         check(ln["segment"] in ("Retail", "Commercial"), f"{ln['line_id']} bad segment")
-    check(all(abs(v - 100) < 1e-6 for v in by_po.values()), "each PO's milestones add to 100%")
+    check(all(abs(v - 100) < 1e-6 for po, v in by_po.items() if po not in bulk_listed),
+          "each PO's milestones add to 100% (a bulk order carries only its deposit)")
     check(len({ln["line_id"] for ln in auto}) == len(auto), "line ids are unique")
-    no_state = [ln["po"] for ln in auto if not ln["state"]]
+    no_state = [ln["po"] for ln in auto if not ln["state"] and not ln.get("bulk")]
     check(not no_state, f"POs with no state: {no_state[:5]}")
     wm = cache["meta"].get("po_watermark")
     check(bool(wm), "incremental watermark is set")

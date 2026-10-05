@@ -128,12 +128,27 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
     stats = {"open_pos": 0, "bulk_excluded": 0, "no_terms": set(), "no_eta": 0,
              "awaiting_approval": 0, "calibrated": 0}
 
+    # Suppliers whose BULK order takes the deposit, later allocated to shipment
+    # POs (K-Life). Kpower / Iron Master / Bodylonger / Imbell bulk orders need
+    # no payment, so their China-stock POs stay out of the list.
+    bulk_dep = {M._key(x) for x in overrides.get("bulk_deposit_suppliers") or []}
+    bulk_dep_book = T.TermsBook([{"supplier_name": x} for x in overrides.get("bulk_deposit_suppliers") or []])
+    is_bulk_dep = lambda name: M._key(name) in bulk_dep or bool(bulk_dep_book.match(name))  # noqa: E731
+    open_bulk = {}
+    for ref, po in cache.get("pos", {}).items():
+        if po.get("is_open") and po.get("stage_raw") in BULK_STAGES and is_bulk_dep(po["supplier"]):
+            open_bulk.setdefault(M._key(po["supplier"]), []).append(ref)
+    stats["bulk_included"] = 0
+
     for ref, po in sorted(cache.get("pos", {}).items()):
         if not po.get("is_open"):
             continue
-        if po.get("stage_raw") in BULK_STAGES:
+        bulk = po.get("stage_raw") in BULK_STAGES
+        if bulk and not is_bulk_dep(po["supplier"]):
             stats["bulk_excluded"] += 1
             continue
+        if bulk:
+            stats["bulk_included"] += 1
         stats["open_pos"] += 1
         ship = po.get("ship") or {}
         trow = book.match(po["supplier"])
@@ -147,7 +162,9 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
         if not trow and not sp:
             stats["no_terms"].add(po["supplier"])
         # Unapproved New POs are drafts in Cin7: nothing is requested on them.
-        awaiting = po.get("stage_raw") in ("New", "NEW") and not po.get("is_approved")
+        # (A bulk-order deposit is requested before Cin7 approval - the team
+        # paid K-Life PO-135014's deposit while it was unapproved.)
+        awaiting = po.get("stage_raw") in ("New", "NEW") and not po.get("is_approved") and not bulk
         if awaiting:
             stats["awaiting_approval"] += 1
 
@@ -174,6 +191,14 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             flags.append(f"ETD estimated (ETA - {transit.get(po.get('state') or '', 5)} wks)")
         if po.get("unmapped_skus"):
             flags.append(f"{len(po['unmapped_skus'])} SKU(s) not in master")
+        review = ""
+        if bulk:
+            review = "Bulk order deposit - allocate it to the shipment POs drawn from this order"
+        elif open_bulk.get(M._key(po["supplier"])) or is_bulk_dep(po["supplier"]):
+            review = ("Check before paying the deposit: it may already be paid on the bulk order "
+                      + ", ".join(sorted(open_bulk.get(M._key(po["supplier"]), [])) or "(bulk order)"))
+        if review:
+            flags.append(review)
 
         base = {
             "source": "auto",
@@ -182,12 +207,14 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             "cin7_id": po.get("cin7_id"),
             "vendor": po["supplier"],
             "terms_supplier": (trow or {}).get("supplier_name"),
-            "branch": po.get("branch"),
-            "state": po.get("state") or "",
+            # A bulk order is not stock for any one state until it is allocated.
+            "branch": "Bulk" if bulk else po.get("branch"),
+            "state": "" if bulk else (po.get("state") or ""),
             "segment": po.get("segment") or "Retail",
             "segment_mixed": po.get("segment_mixed"),
-            "stage": po.get("stage"),
+            "stage": "Bulk (China stock)" if bulk else po.get("stage"),
             "stage_raw": po.get("stage_raw"),
+            "bulk": bulk,
             "entry_date": po.get("po_date"),
             "supplier_invoice": po.get("supplier_invoice"),
             "etd": _s(etd), "etd_estimated": etd_est,
@@ -215,11 +242,16 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
         elif "full" in rec:
             dep = 0.0
         mile = []
-        if dep:
+        if bulk:
+            # Only the deposit is paid on the bulk order; balances follow on
+            # the shipment POs it is allocated to.
+            dep = dep or float(T.parse_terms(trow, sp)["deposit_pct"] or 30)
+            mile.append(("deposit", f"Bulk deposit {dep:g}%", dep, "order", DEPOSIT_LAG_DAYS))
+        elif dep:
             mile.append(("deposit", f"Deposit {dep:g}%", dep, "order", DEPOSIT_LAG_DAYS))
             mile.append(("balance", f"Balance {100 - dep:g}%", 100 - dep,
                          rule["balance_anchor"], rule["balance_offset"]))
-        else:
+        if not bulk and not dep:
             mile.append(("full", "Full payment 100%", 100.0,
                          rule["balance_anchor"], rule["balance_offset"]))
         for kind, label, pct, anchor, offset in mile:
@@ -228,7 +260,7 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             # What must already have been paid, given how far the PO has got.
             assumed = None
             po_age = (dt.date.today() - anchors["order"]).days if anchors["order"] else 999
-            if kind == "deposit" and po.get("past_deposit_stage") and (
+            if kind == "deposit" and not bulk and po.get("past_deposit_stage") and (
                     po.get("stage_raw") in SHIPPED_STAGES or po_age > DEPOSIT_ASSUME_DAYS):
                 assumed = f"deposit assumed paid - PO is {po.get('stage')}, raised {po_age} days ago"
             elif (po.get("stage_raw") in SHIPPED_STAGES and
@@ -246,6 +278,7 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
                 "due_anchor": anchor,
                 "assumed_paid": assumed,
                 "awaiting_approval": awaiting,
+                "review": review if (kind == "deposit" or bulk) else "",
             })
     stats["no_terms"] = sorted(stats["no_terms"])
     return lines, stats

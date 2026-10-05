@@ -1,6 +1,6 @@
 {
- "built": "2026-10-05 09:10",
- "source": "Payment Request for Four-week Rolling Forecast (61).xlsx",
+ "built": "2026-10-05 09:35",
+ "source": "Payment Request for Four-week Rolling Forecast 05102026.xlsx",
  "deposit_since": "2026-04-01",
  "suppliers": {
   "bodylonger fitness equipment co.,ltd": {
@@ -10,7 +10,7 @@
    "anchor": "eta",
    "offset_days": -9,
    "n": 42,
-   "mad": 2.5
+   "mad": 2.0
   },
   "dkcity / tung keng enterprise co., ltd": {
    "supplier": "DKCITY / Tung Keng Enterprise Co., Ltd",
@@ -52,8 +52,8 @@
    "deposit_pos": 25,
    "anchor": "eta",
    "offset_days": -10,
-   "n": 81,
-   "mad": 3
+   "n": 82,
+   "mad": 2.5
   },
   "kpower": {
    "supplier": "Kpower",
@@ -69,9 +69,9 @@
    "deposit_rate": 0.0,
    "deposit_pos": 26,
    "anchor": "eta",
-   "offset_days": -15,
-   "n": 13,
-   "mad": 0
+   "offset_days": -11,
+   "n": 15,
+   "mad": 1
   },
   "qingdao csp industry and trade co.,ltd": {
    "supplier": "Qingdao CSP Industry and Trade Co.,ltd",
@@ -79,8 +79,8 @@
    "deposit_pos": 38,
    "anchor": "eta",
    "offset_days": -11,
-   "n": 86,
-   "mad": 5.0
+   "n": 87,
+   "mad": 5
   },
   "qingdao great century plastic co.,ltd": {
    "supplier": "Qingdao Great Century Plastic Co.,Ltd",
@@ -114,7 +114,7 @@
    "deposit_rate": 1.0,
    "deposit_pos": 5,
    "anchor": "etd",
-   "offset_days": -10,
+   "offset_days": -3,
    "n": 5,
    "mad": 0
   },
@@ -127,22 +127,19 @@
    "n": 15,
    "mad": 5
   },
-  "skyler rubber products of vietnam": {
-   "supplier": "Skyler Rubber Products of Vietnam",
-   "anchor": "eta",
-   "offset_days": 13,
-   "n": 20,
-   "mad": 3.5
-  },
   "watson gym equipment": {
    "supplier": "Watson Gym Equipment",
    "deposit_rate": 1.0,
-   "deposit_pos": 5
+   "deposit_pos": 5,
+   "anchor": "etd",
+   "offset_days": -2,
+   "n": 6,
+   "mad": 8.0
   },
   "xiamen k-life sport co., ltd": {
    "supplier": "Xiamen K-Life Sport Co., Ltd",
    "deposit_rate": 1.0,
-   "deposit_pos": 4,
+   "deposit_pos": 5,
    "anchor": "eta",
    "offset_days": -8,
    "n": 13,
@@ -153,7 +150,7 @@
    "deposit_rate": 1.0,
    "deposit_pos": 11,
    "anchor": "eta",
-   "offset_days": -51,
+   "offset_days": -52,
    "n": 6,
    "mad": 2.5
   },
@@ -176,6 +173,7 @@
   "Real Leader",
   "Shandong Brightway Fitness Equipment Co. Ltd",
   "Shandong Dongli Health And Technology",
+  "Skyler Rubber",
   "TIANZHAN FITNESS EQUIPMENT"
  ]
 }

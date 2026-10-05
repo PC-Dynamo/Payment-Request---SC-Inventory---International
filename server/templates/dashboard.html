@@ -82,6 +82,10 @@ table.reg{border-collapse:separate;border-spacing:0;width:100%;min-width:1480px;
 .reg th.num,.reg td.num{text-align:right;font-variant-numeric:tabular-nums}
 .reg tr:hover td{background:#fbfcfe}
 .reg tr.manual td:first-child{box-shadow:inset 3px 0 0 var(--s4)}
+/* review colour: bulk-order deposits and deposits that may be covered by one */
+.reg tr.review td{background:#f4efff}
+.reg tr.review td:first-child{box-shadow:inset 3px 0 0 #7b5cd6}
+.rv{display:inline-block;background:#7b5cd6;color:#fff;border-radius:4px;padding:0 4px;font-size:10px;font-weight:700;margin-left:3px}
 .reg tr.grp td{background:var(--soft);font-weight:600;color:var(--navy)}
 .reg tfoot td{background:#fafbfd;font-weight:700;border-top:2px solid var(--line);border-bottom:0}
 .reg td.ed{cursor:text}
@@ -187,7 +191,7 @@ dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
     <section>
       <div class="totals" id="totals"></div>
       <div class="tscroll"><table class="reg" id="tbl"><colgroup id="cols"></colgroup><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
-      <div class="note">Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount). ✎ opens every field.
+      <div class="note"><span class="rv">BULK</span> / <span class="rv">CHECK</span> purple rows need a review: K-Life bulk-order deposit, or a deposit that may already be paid on the bulk order.<br>Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount). ✎ opens every field.
         <label style="margin-left:14px"><input type="checkbox" id="fGroup" checked> Group by request date</label>
         <button id="bSubmit" disabled style="margin-left:10px">Mark selected as Requested</button></div>
     </section>
@@ -387,7 +391,7 @@ function cell(r,c){
   switch(key){
     case "sel": return r.status==="For Payment"?`<input type="checkbox" class="sel" data-id="${esc(r.line_id)}" ${selected.has(r.line_id)?"checked":""} aria-label="select">`:"";
     case "vendor_entity": return `${esc(r.vendor_entity)}${r.flags&&r.flags.length?` <span class="flag" title="${esc(r.flags.join("\n"))}">⚠</span>`:""}`;
-    case "po": return cin7Link(r);
+    case "po": return cin7Link(r)+(r.bulk?'<span class="rv" title="Bulk order">BULK</span>':r.review?'<span class="rv" title="Check: deposit may be on the bulk order">CHECK</span>':"");
     case "etd": return esc(dd(r.etd))+(r.etd_estimated&&r.etd?'<span class="muted" title="estimated from ETA and transit time">*</span>':"");
     case "due_date": return `<span class="${r.overdue?"od":""}" title="${esc(r.due_overridden?"due date set by hand":(r.terms_rule||""))}">${esc(dd(r.due_date))||'<span class="muted">TBC</span>'}</span>`;
     case "status": return `<span class="pill st-${esc(String(r.status).replace(/\s+/g,""))}" title="${esc(r.assumed_paid||"")}">${esc(statusLabel(r))}</span>`;
@@ -422,7 +426,7 @@ function renderTable(){
   for(const r of rows){
     if(group){const g=gname(r);if(g!==last){const gr=gtot[g];
       html+=`<tr class="grp"><td colspan="${COLS.length}">${esc(g)} · ${gr.length} lines · `+CURS.map(c=>[c,sum(gr,c)]).filter(x=>x[1]).map(([c,v])=>`${c} ${money(v)}`).join(" · ")+`</td></tr>`;last=g}}
-    html+=`<tr class="${r.source==="manual"?"manual":""}" data-id="${esc(r.line_id)}">`+COLS.map(c=>{
+    html+=`<tr class="${r.source==="manual"?"manual":""}${r.review?" review":""}" data-id="${esc(r.line_id)}" title="${esc(r.review||"")}">`+COLS.map(c=>{
       const ed=editable(r,c);
       const cls=(c[3]==="money"?"num nw ":c[3]==="date"?"nw ":"")+(ed?"ed":"");
       const inner=c[3]==="text"?`<div class="clamp" title="${esc(r[c[0]]||"")}">${cell(r,c)}</div>`:cell(r,c);

@@ -257,12 +257,96 @@ def backfill(states: dict, charges: list) -> int:
     return n
 
 
+SYNC_LINE_FIELDS = ("status", "request_date", "paid_date", "amount", "currency", "invoice_no",
+                    "comment", "vendor_entity", "acc_scheduled_date", "paid_amount")
+SYNC_MANUAL_FIELDS = ("status", "request_date", "paid_date", "due_date", "amount", "currency",
+                      "doc_no", "comment", "acc_scheduled_date", "paid_amount", "vendor")
+SEED_WHO = "seed: payment request workbook"
+
+
+def _is_seed(who) -> bool:
+    return not who or str(who).startswith("seed")
+
+
+def sync(states: dict, charges: list, label: str) -> dict:
+    """Bring the app up to a newer copy of the team's workbook.
+
+    Lines still holding only workbook data follow the workbook; new rows are
+    added; anything a person changed in the app is kept and reported."""
+    out = {"line_added": 0, "line_updated": 0, "manual_added": 0, "manual_updated": 0,
+           "conflicts": []}
+    now = L.now_awst()
+    with L.connect() as con:
+        for lid, v in states.items():
+            vals = {f: L.clean(f, v.get(f)) for f in SYNC_LINE_FIELDS if f in v}
+            cur = con.execute("SELECT * FROM line_state WHERE line_id = ?", (lid,)).fetchone()
+            if not cur:
+                cols = ["line_id", *vals, "seed_key", "updated_by", "updated_at"]
+                con.execute(f"INSERT INTO line_state({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                            [lid, *vals.values(), f"reference row {v.get('_row')}", SEED_WHO, now])
+                out["line_added"] += 1
+                continue
+            diff = {f: x for f, x in vals.items() if x is not None and x != cur[f]}
+            if v.get("status", "-") is None and cur["status"] and _is_seed(cur["updated_by"]):
+                diff["status"] = None        # back to automatic: queued, not yet requested
+            if not diff:
+                continue
+            if not _is_seed(cur["updated_by"]):
+                out["conflicts"].append(f"{lid}: kept the app's {', '.join(sorted(diff))} "
+                                        f"(edited by {cur['updated_by']})")
+                continue
+            sets = ", ".join(f"{f} = ?" for f in diff)
+            con.execute(f"UPDATE line_state SET {sets}, updated_by = ?, updated_at = ? WHERE line_id = ?",
+                        [*diff.values(), SEED_WHO, now, lid])
+            con.execute("INSERT INTO audit(at, who, action, line_id, detail) VALUES (?,?,?,?,?)",
+                        (now, SEED_WHO, f"sync from {label}", lid, json.dumps(diff, default=str)))
+            out["line_updated"] += 1
+
+        for c in charges:
+            key = c["seed_key"]
+            cur = con.execute("SELECT * FROM manual_line WHERE seed_key = ? AND deleted = 0", (key,)).fetchone()
+            if not cur and c.get("doc_no"):
+                # Same invoice, re-dated or re-valued in the workbook: update, do not duplicate.
+                cur = con.execute(
+                    "SELECT * FROM manual_line WHERE doc_no = ? AND pay_type = ? AND deleted = 0 "
+                    "AND created_by LIKE 'seed%'", (c["doc_no"], c["pay_type"])).fetchone()
+            if not cur:
+                data = {k: x for k, x in c.items() if k != "seed_key"}
+                vals = {f: L.clean(f, data.get(f)) for f in L.MANUAL_FIELDS}
+                vals["pay_type"] = vals["pay_type"] or "Other"
+                if vals["amount"] is None:
+                    continue
+                vals["currency"] = vals["currency"] or L.CHARGE_TYPES.get(vals["pay_type"], "AUD")
+                cols = ["seed_key", *L.MANUAL_FIELDS, "created_by", "created_at"]
+                con.execute(f"INSERT INTO manual_line({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                            [key, *[vals[f] for f in L.MANUAL_FIELDS], SEED_WHO, now])
+                out["manual_added"] += 1
+                continue
+            vals = {f: L.clean(f, c.get(f)) for f in SYNC_MANUAL_FIELDS if f in c}
+            diff = {f: x for f, x in vals.items() if x not in (None, "") and x != cur[f]}
+            if not diff:
+                continue
+            if not _is_seed(cur["updated_by"]):
+                out["conflicts"].append(f"M{cur['id']} {cur['pay_type']} {cur['doc_no'] or ''}: kept the "
+                                        f"app's {', '.join(sorted(diff))} (edited by {cur['updated_by']})")
+                continue
+            sets = ", ".join(f"{f} = ?" for f in diff)
+            con.execute(f"UPDATE manual_line SET {sets}, updated_at = ? WHERE id = ?",
+                        [*diff.values(), now, cur["id"]])
+            con.execute("INSERT INTO audit(at, who, action, line_id, detail) VALUES (?,?,?,?,?)",
+                        (now, SEED_WHO, f"sync from {label}", f"M{cur['id']}", json.dumps(diff, default=str)))
+            out["manual_updated"] += 1
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--since", default="2026-08-01",
                     help="import charge lines entered or requested on/after this date")
     ap.add_argument("--file", help="reference workbook (default: newest in Reference/)")
+    ap.add_argument("--sync", action="store_true",
+                    help="bring the app up to a newer copy of the workbook (keeps people's edits)")
     ap.add_argument("--backfill", action="store_true",
                     help="only fill the register columns added later (vendor entity, accounts "
                          "scheduled date, paid amount) on lines the seed created and nobody edited")
@@ -276,6 +360,14 @@ def main() -> int:
     states, charges = plan(rows, auto, a.since, today)
     print(f"reference: {ref.name} - {len(rows)} rows")
     print(f"plan: {len(states)} auto-line states, {len(charges)} manual charge lines")
+    if a.sync:
+        res = sync(states, charges, ref.name)
+        print(f"sync: {res['line_added']} lines added, {res['line_updated']} updated; "
+              f"{res['manual_added']} manual lines added, {res['manual_updated']} updated; "
+              f"{len(res['conflicts'])} kept as edited in the app")
+        for x in res["conflicts"][:40]:
+            print("  kept:", x)
+        return 0
     if a.backfill:
         n = backfill(states, charges)
         print(f"backfilled {n} empty register fields")
