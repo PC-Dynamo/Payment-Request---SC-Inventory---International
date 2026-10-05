@@ -68,17 +68,17 @@ CREATE TABLE IF NOT EXISTS audit (
 
 LINE_FIELDS = ("status", "request_date", "paid_date", "due_date", "amount", "currency",
                "invoice_no", "comment", "pay_type", "vendor_entity", "acc_scheduled_date",
-               "paid_amount")
+               "paid_amount", "finalised")
 MANUAL_FIELDS = ("entry_date", "vendor", "pay_type", "po_refs", "branch", "state", "segment",
                  "doc_no", "currency", "amount", "due_date", "request_date", "status",
-                 "paid_date", "comment", "acc_scheduled_date", "paid_amount")
+                 "paid_date", "comment", "acc_scheduled_date", "paid_amount", "finalised")
 
 # Columns added after release. CREATE TABLE IF NOT EXISTS never alters a live
 # table, so every new column must also be listed here.
 MIGRATIONS = {
     "line_state": {"pay_type": "TEXT", "vendor_entity": "TEXT",
-                   "acc_scheduled_date": "TEXT", "paid_amount": "REAL"},
-    "manual_line": {"acc_scheduled_date": "TEXT", "paid_amount": "REAL"},
+                   "acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER"},
+    "manual_line": {"acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER"},
 }
 
 
@@ -134,6 +134,12 @@ def clean(field: str, value):
             return _amount(value)
         except ValueError:
             raise ValueError(f"{field.replace('_', ' ')} must be a number")
+    if field == "finalised":
+        # "Finalised" = the PI / invoice amount is confirmed (the team's Excel
+        # leaves such rows white; unconfirmed ones are peach). Blank = automatic.
+        if value in (None, ""):
+            return None
+        return 1 if str(value).strip().lower() in ("1", "true", "yes", "y", "on") else 0
     if field == "status":
         v = (value or "").strip()
         if v and v not in STATUSES:

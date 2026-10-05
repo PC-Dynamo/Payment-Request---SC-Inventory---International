@@ -152,6 +152,8 @@ COLUMNS = [       # the team's payment request register, in its column order
     ("Container Size", "container_size", 11, None),
     ("Payment Type", "pay_type", 18, None),
     ("Payment Status", "status", 13, None),
+    ("Finalised", "_final", 9, None),
+    ("Payee", "payee", 10, None),
     ("Payment Request Date", "request_date", 12, "date"),
     ("Due Date", "due_date", 11, "date"),
     ("Accounts Scheduled Payment Date", "acc_scheduled_date", 13, "date"),
@@ -201,6 +203,8 @@ def write_xlsx(rows: list[dict], meta: dict, path: Path, subtitle: str = "") -> 
         amt = float(row.get("amount") or 0)
         vals = {f"_{c.lower()}": (amt if cur == c else None) for c in ("USD", "AUD", "GBP", "EUR")}
         vals["_flags"] = "; ".join(row.get("flags") or [])
+        vals["_final"] = "" if row.get("status") in ("Paid", "Not Payable") else (
+            "Yes" if row.get("finalised") else "No")
         for k in totals:
             totals[k] += (vals.get(k) if k.startswith("_") else row.get(k)) or 0
         for i, (_, key, _, kind) in enumerate(COLUMNS, 1):
@@ -215,6 +219,9 @@ def write_xlsx(rows: list[dict], meta: dict, path: Path, subtitle: str = "") -> 
                 c.number_format = "DD/MM/YYYY"
             elif kind == "money":
                 c.number_format = "#,##0.00"
+        if row.get("not_final"):            # the team's peach = not finalised yet
+            for i in range(1, len(COLUMNS) + 1):
+                ws.cell(row=r, column=i).fill = PatternFill("solid", fgColor="FCE4D6")
         if row.get("overdue"):
             ws.cell(row=r, column=2).font = Font(color="A11B1B", bold=True)
     r += 1

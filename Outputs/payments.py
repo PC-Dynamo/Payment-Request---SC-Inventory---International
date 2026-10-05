@@ -80,6 +80,19 @@ def container_parts(raw: str) -> tuple[str, str]:
     return ", ".join(dict.fromkeys(sizes)), ", ".join(dict.fromkeys(nums))
 
 
+# Who is paid. Rizqi (UAT): keep factory invoices apart from forwarder /
+# customs broker invoices (Mainfreight, Ice Cargo).
+FORWARDER_TYPES = {"Freight Payment", "Customs Brokerage", "GST Payment", "Government Duty",
+                   "Cartage", "Local Cartage Delivery", "Detention Charges", "Document Charge",
+                   "Handling Charge"}
+
+
+def payee_of(row: dict) -> str:
+    if row.get("source") == "auto" or row.get("pay_type") == "Supplier Payment":
+        return "Supplier"
+    return "Forwarder" if row.get("pay_type") in FORWARDER_TYPES else "Other"
+
+
 def po_list(text: str) -> list[str]:
     """'PO 128830 - Impulse / PO-127734' -> ['PO-128830', 'PO-127734']"""
     return [f"PO-{n}" for n in dict.fromkeys(re.findall(r"(?<!\d)(\d{5,6})(?!\d)", text or ""))]
@@ -317,9 +330,20 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
                 status = "For Payment" if request_day_for(due, today) <= nxt else "Forecast"
         if req is None and status not in ("Paid", "Not Payable", "Date TBC", "Awaiting Approval"):
             req = request_day_for(due, today) if due else nxt
+        stored_final = st.get("finalised")
+        if stored_final is None:
+            # Default: confirmed once someone has entered the PI amount or invoice.
+            final = bool(row.get("source") == "manual" or row.get("amount_overridden")
+                         or row.get("invoice_no"))
+        else:
+            final = bool(stored_final)
         row.update({
+            "finalised": final,
+            "finalised_stored": stored_final,
+            "payee": payee_of(row),
             "status_stored": st.get("status") or "",
             "request_stored": st.get("request_date") or "",
+            "not_final": bool(not final and status not in ("Paid", "Not Payable", "Awaiting Approval")),
             "status": status,
             "due_date": _s(due),
             "request_date": _s(req),
@@ -421,6 +445,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
             "created_by": m.get("created_by"),
         }
         st = {"status": m.get("status"), "request_date": m.get("request_date"),
+              "finalised": m.get("finalised"),
               "paid_date": m.get("paid_date"), "comment": m.get("comment"),
               "updated_by": m.get("updated_by") or m.get("created_by"),
               "updated_at": m.get("updated_at") or m.get("created_at")}

@@ -82,8 +82,11 @@ table.reg{border-collapse:separate;border-spacing:0;width:100%;min-width:1480px;
 .reg th.num,.reg td.num{text-align:right;font-variant-numeric:tabular-nums}
 .reg tr:hover td{background:#fbfcfe}
 .reg tr.manual td:first-child{box-shadow:inset 3px 0 0 var(--s4)}
+/* peach = not finalised yet (PI / amount unconfirmed) - same colour as the team's Excel */
+.reg tr.nf td{background:#fce4d6}
+.reg tr.nf:hover td{background:#f9d6c0}
 /* review colour: bulk-order deposits and deposits that may be covered by one */
-.reg tr.review td{background:#f4efff}
+.reg tr.review:not(.nf) td{background:#f4efff}
 .reg tr.review td:first-child{box-shadow:inset 3px 0 0 #7b5cd6}
 .rv{display:inline-block;background:#7b5cd6;color:#fff;border-radius:4px;padding:0 4px;font-size:10px;font-weight:700;margin-left:3px}
 .reg tr.grp td{background:var(--soft);font-weight:600;color:var(--navy)}
@@ -168,6 +171,8 @@ dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
       <span class="f">State <span class="seg" id="fState"></span></span>
       <span class="f">Channel <span class="seg" id="fSeg"></span></span>
       <span class="f">Currency <span class="seg" id="fCur"></span></span>
+      <span class="f">Payee <span class="seg" id="fPayee"></span></span>
+      <span class="f">PI <span class="seg" id="fFin"></span></span>
     </div>
     <div class="frow">
       <label class="f">Supplier <select id="fSup"></select></label>
@@ -192,7 +197,7 @@ dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
       <div class="totals" id="totals"></div>
       <div class="tscroll"><table class="reg" id="tbl"><colgroup id="cols"></colgroup><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
       <div class="note"><span class="rv">BULK</span> / <span class="rv">CHECK</span> purple rows need a review: K-Life bulk-order deposit, or a deposit that may already be paid on the bulk order.<br>Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount). ✎ opens every field.
-        <label style="margin-left:14px"><input type="checkbox" id="fGroup" checked> Group by request date</label>
+        <label style="margin-left:14px">Group by <select id="fGroup"><option value="date">Request date</option><option value="payee">Payee</option><option value="date_payee">Request date + payee</option><option value="">None</option></select></label>
         <button id="bSubmit" disabled style="margin-left:10px">Mark selected as Requested</button></div>
     </section>
   </div>
@@ -237,7 +242,7 @@ const dd=s=>{if(!s)return"";const[y,m,d]=String(s).slice(0,10).split("-");return
 const SER=["--s1","--s2","--s3","--s4","--s5"].map(v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim());
 const CURS=["USD","AUD","GBP","EUR"];
 let DATA=[],META=null,charts={},sortKey=null,sortDir=1,selected=new Set(),TAB="reg",SPECIAL={};
-const F0={win:"open",state:"",seg:"",cur:"",sup:"",stage:"",status:"",type:"",q:"",reqF:"",reqT:"",etdF:"",etdT:"",etaF:"",etaT:""};
+const F0={payee:"",fin:"",group:"date",win:"open",state:"",seg:"",cur:"",sup:"",stage:"",status:"",type:"",q:"",reqF:"",reqT:"",etdF:"",etdT:"",etaF:"",etaT:""};
 const F={...F0};
 try{Object.assign(F,JSON.parse(localStorage.getItem("prf3")||"{}"));F.q=""}catch(e){}
 function saveF(){try{localStorage.setItem("prf3",JSON.stringify(F))}catch(e){}}
@@ -272,6 +277,8 @@ function buildFilters(){
   seg("#fState",[["","All"],...META.states.map(s=>[s,s])],"state");
   seg("#fSeg",[["","All"],["Retail","Retail"],["Commercial","Commercial"]],"seg");
   seg("#fCur",[["","All"],...CURS.map(c=>[c,c])],"cur");
+  seg("#fPayee",[["","All"],["Supplier","Supplier (factory)"],["Forwarder","Forwarder / broker"],["Other","Other"]],"payee");
+  seg("#fFin",[["","All"],["no","Not finalised"],["yes","Finalised"]],"fin");
   fillSelects();
   const bind=(id,key,ev="change")=>{const el=$(id);el.value=F[key]||"";el.addEventListener(ev,()=>{F[key]=el.value.trim?el.value.trim():el.value;if(key!=="q")saveF();render()})};
   bind("#fSup","sup");bind("#fStage","stage");bind("#fStatus","status");bind("#fType","type");bind("#fQ","q","input");
@@ -296,6 +303,9 @@ function passBase(r){  // every filter except the Show window (KPI cards are win
   if(F.state&&r.state!==F.state)return false;
   if(F.seg&&r.segment!==F.seg)return false;
   if(F.cur&&r.currency!==F.cur)return false;
+  if(F.payee&&r.payee!==F.payee)return false;
+  if(F.fin==="no"&&!r.not_final)return false;
+  if(F.fin==="yes"&&(r.not_final||["Paid","Not Payable"].includes(r.status)))return false;
   if(F.sup&&!(r.supplier===F.sup||r.vendor_entity===F.sup||(r.supplier||"").split(", ").includes(F.sup)))return false;
   if(F.stage&&r.stage!==F.stage)return false;
   if(F.status&&statusLabel(r)!==F.status)return false;
@@ -309,7 +319,7 @@ function passBase(r){  // every filter except the Show window (KPI cards are win
 // Picking a status means "find those lines": it searches every line rather than
 // only the Show window (UAT: "Paid" returned nothing inside the 4-week view).
 const rowsF=()=>DATA.filter(r=>passBase(r)&&(F.status?true:inWin(r)));
-function activeFilterCount(){return ["state","seg","cur","sup","stage","status","type","q","reqF","reqT","etdF","etdT","etaF","etaT"].filter(x=>F[x]).length}
+function activeFilterCount(){return ["payee","fin","state","seg","cur","sup","stage","status","type","q","reqF","reqT","etdF","etdT","etaF","etaT"].filter(x=>F[x]).length}
 
 // ------------------------------------------------------------------ KPIs + totals
 function sum(rows,cur,field="amount"){return rows.filter(r=>r.currency===cur).reduce((a,r)=>a+(+r[field]||0),0)}
@@ -338,6 +348,9 @@ function renderTotals(rows){
   $("#totals").innerHTML=`<span>${n?`<b>${n}</b> filter${n>1?"s":""} ·`:""} <b>${rows.length}</b> lines</span>`+
     parts.map(([c,v])=>`<span>${c} <b>${money(v)}</b></span>`).join("")+
     (paid.length?`<span class="muted">Paid amount: ${paid.map(([c,v])=>`${c} ${money(v)}`).join(" · ")}</span>`:"")+
+    ["Supplier","Forwarder","Other"].map(p=>{const pr=rows.filter(r=>r.payee===p);if(!pr.length)return "";
+      return `<span class="muted">${p==="Supplier"?"Supplier":p==="Forwarder"?"Forwarder/broker":"Other"}: `+CURS.map(c=>[c,sum(pr,c)]).filter(x=>x[1]).map(([c,v])=>`${c} ${money(v)}`).join(" · ")+`</span>`}).join("")+
+    (rows.some(r=>r.not_final)?`<span style="background:#fce4d6;border-radius:4px;padding:0 6px">${rows.filter(r=>r.not_final).length} not finalised</span>`:"")+
     `<span class="sp"></span><span class="muted">${esc(F.status?`Status "${F.status}" — all lines searched`:winLabel())}</span>`;
   $("#fCount").textContent=n?`${n} filter${n>1?"s":""} active`:"";
 }
@@ -362,6 +375,7 @@ const ALLCOLS=[   // [key, header, width weight (px at ~1700 wide), kind, editab
   ["container_size","Container Size",42],
   ["pay_type","Payment Type",74,"select","pay_type"],
   ["status","Payment Status",74,"status","status"],
+  ["finalised","Final",34,"final"],
   ["request_date","Payment Request Date",58,"date","request_date"],
   ["due_date","Due Date",58,"date","due_date"],
   ["acc_scheduled_date","Accounts Scheduled Payment Date",60,"date","acc_scheduled_date"],
@@ -399,6 +413,8 @@ function cell(r,c){
       return r.currency===key?money(r.amount)+(r.source==="auto"&&!r.amount_overridden&&!r.usd_exact&&key==="USD"?' <span class="muted" title="estimated USD - enter the invoice amount">~</span>':""):"";
     case "paid_amount": return money(r.paid_amount);
     case "pct": return r.pct!=null?fmt(r.pct,0)+"%":"";
+    case "finalised": return ["Paid","Not Payable"].includes(r.status)?"":
+      `<input type="checkbox" class="fin" data-id="${esc(r.line_id)}" ${r.finalised?"checked":""} title="PI / amount confirmed (untick = peach, not finalised)">`;
     case "edit": return `<button class="icon ed" data-id="${esc(r.line_id)}" title="All fields / details">✎</button>`;
     default: return c[3]==="date"?esc(dd(r[key])):esc(r[key]);
   }
@@ -419,14 +435,18 @@ function renderTable(){
   const tw=COLS.reduce((a,c)=>a+c[2],0);
   $("#cols").innerHTML=COLS.map(c=>`<col style="width:${(c[2]/tw*100).toFixed(3)}%">`).join("");
   $("#tbl thead").innerHTML="<tr>"+COLS.map(c=>`<th data-k="${c[0]}" class="${c[3]==="money"?"num":""}">${esc(c[1])}${sortKey===c[0]?(sortDir>0?" ▲":" ▼"):""}</th>`).join("")+"</tr>";
-  const group=$("#fGroup").checked&&!sortKey;
-  const gname=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.status==="Awaiting Approval"?"Awaiting PO approval in Cin7 (New, not approved) — not requested yet":x.request_date?`Request ${dd(x.request_date)}${x.request_date===META.next_request?" (next)":""}`:"Date TBC — no ETA yet";
+  const group=!!F.group&&!sortKey;
+  const pname=x=>x.payee==="Supplier"?"Supplier (factory)":x.payee==="Forwarder"?"Forwarder / broker":"Other";
+  const gdate=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.status==="Awaiting Approval"?"Awaiting PO approval in Cin7 (New, not approved) — not requested yet":x.request_date?`Request ${dd(x.request_date)}${x.request_date===META.next_request?" (next)":""}`:"Date TBC — no ETA yet";
+  const gname=x=>F.group==="payee"?pname(x):F.group==="date_payee"?`${gdate(x)} · ${pname(x)}`:gdate(x);
+  if(group&&F.group!=="date"){const ord=x=>({Supplier:0,Forwarder:1,Other:2})[x.payee]??3;
+    rows=[...rows].sort((a,b)=>F.group==="payee"?ord(a)-ord(b):((a.request_date||"9")+ord(a)).localeCompare((b.request_date||"9")+ord(b)));VIEW=rows}
   const gtot={};if(group)rows.forEach(x=>{const g=gname(x);(gtot[g]=gtot[g]||[]).push(x)});
   let html="",last=null;
   for(const r of rows){
     if(group){const g=gname(r);if(g!==last){const gr=gtot[g];
       html+=`<tr class="grp"><td colspan="${COLS.length}">${esc(g)} · ${gr.length} lines · `+CURS.map(c=>[c,sum(gr,c)]).filter(x=>x[1]).map(([c,v])=>`${c} ${money(v)}`).join(" · ")+`</td></tr>`;last=g}}
-    html+=`<tr class="${r.source==="manual"?"manual":""}${r.review?" review":""}" data-id="${esc(r.line_id)}" title="${esc(r.review||"")}">`+COLS.map(c=>{
+    html+=`<tr class="${r.source==="manual"?"manual":""}${r.review?" review":""}${r.not_final?" nf":""}" data-id="${esc(r.line_id)}" title="${esc(r.review||"")}">`+COLS.map(c=>{
       const ed=editable(r,c);
       const cls=(c[3]==="money"?"num nw ":c[3]==="date"?"nw ":"")+(ed?"ed":"");
       const inner=c[3]==="text"?`<div class="clamp" title="${esc(r[c[0]]||"")}">${cell(r,c)}</div>`:cell(r,c);
@@ -450,8 +470,13 @@ $("#tbl").addEventListener("click",e=>{
   const b=e.target.closest("button.ed");if(b){openLine(b.dataset.id);return}
   const td=e.target.closest("td.ed");if(td&&!td.querySelector("input,select")&&!e.target.closest("a"))startEdit(td);
 });
-$("#tbl").addEventListener("change",e=>{
-  if(e.target.classList.contains("sel")){e.target.checked?selected.add(e.target.dataset.id):selected.delete(e.target.dataset.id);updSubmit()}
+$("#tbl").addEventListener("change",async e=>{
+  if(e.target.classList.contains("sel")){e.target.checked?selected.add(e.target.dataset.id):selected.delete(e.target.dataset.id);updSubmit();return}
+  if(e.target.classList.contains("fin")){
+    try{await api("api/line",{method:"POST",body:JSON.stringify({line_id:e.target.dataset.id,changes:{finalised:e.target.checked?"1":"0"}})});
+      toast(e.target.checked?"Marked finalised":"Marked not finalised");await load(false)}
+    catch(err){toast("Not saved: "+err.message);renderTable()}
+  }
 });
 // ---- inline edit
 function startEdit(td){
@@ -482,7 +507,7 @@ function startEdit(td){
   el.addEventListener("blur",()=>finish(true));
   if(el.tagName==="SELECT")el.addEventListener("change",()=>finish(true));
 }
-$("#fGroup").onchange=renderTable;
+$("#fGroup").value=F.group||"";$("#fGroup").onchange=e=>{F.group=e.target.value;saveF();renderTable()};
 function updSubmit(){const n=[...selected].filter(id=>DATA.some(r=>r.line_id===id&&r.status==="For Payment")).length;
   $("#bSubmit").disabled=!n;$("#bSubmit").textContent=n?`Mark ${n} selected as Requested`:"Mark selected as Requested"}
 $("#bSubmit").onclick=async()=>{
@@ -627,6 +652,8 @@ function renderNotes(){
     `<b>USD</b>: Cin7 holds POs in landed AUD, so USD = qty × Cin7 costUSD, pinned per PO line when first seen. Values marked ~ are estimated — enter the invoice amount to override.`,
     `<b>When a payment is requested</b>: percentages come from master-data terms; whether a deposit is taken and how many days before ETD / forwarder ETA the balance is requested follow the team's own payment history (${esc(m.calibration&&m.calibration.source||"payment workbook")}). Each line's rule is shown in ✎.`,
     `<b>Awaiting Approval</b>: New POs not yet approved in Cin7 are drafts — listed, never requested. A deposit is requested ${"6"} days after approval.`,
+    `<b>Peach rows</b> = not finalised yet (PI / amount still to confirm), as in the team's Excel. A line counts as finalised once its PI amount or invoice no. is entered, or when the Final box is ticked. The app estimates USD from Cin7 costs - the supplier's PI amount always has to be entered by hand.`,
+    `<b>Payee</b>: Supplier (factory) = PO payments; Forwarder / broker = freight, customs, GST, duty, cartage (Mainfreight, Ice Cargo); Other = e.g. inspections.`,
     `<b>Paid (assumed)</b>: deposits of approved POs older than 3 weeks or on the water, and pre-shipment payments of POs on the water, until someone records otherwise.`,
     `<b>Filters</b>: ETA filters on the forwarder ETA, or the Cin7 ETA when there is none. Totals and the Excel export follow every filter.`,
     s.no_terms&&s.no_terms.length?`<b>No payment terms in master-data</b> (defaulted to full payment 7 days before ETA): ${s.no_terms.map(esc).join(", ")}.`:"",

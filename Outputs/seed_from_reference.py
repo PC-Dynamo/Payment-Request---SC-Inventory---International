@@ -92,8 +92,31 @@ def _charge_type(status: str) -> str | None:
     return None
 
 
+# The team's "not finalised yet" colour: Excel theme Accent 2, lighter 80% (peach).
+PEACH = {("theme", 5)}
+
+
+def peach_rows(path: Path) -> set[int]:
+    """Sheet row numbers the team shaded peach = amount / PI not finalised."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path)        # styles need a full (not read-only) load
+    ws = wb["updated"]
+    out = set()
+    for r in range(2, ws.max_row + 1):
+        fl = ws.cell(row=r, column=4).fill
+        if fl is None or fl.fill_type != "solid":
+            continue
+        c = fl.fgColor
+        if (c.type == "theme" and (c.type, c.theme) in PEACH and (c.tint or 0) > 0.5) or \
+                (c.type == "rgb" and str(c.rgb).upper() in ("FFFCE4D6", "FFF8CBAD", "FFFBE2D5")):
+            out.add(r)
+    wb.close()
+    return out
+
+
 def load_reference(path: Path) -> list[dict]:
     import openpyxl
+    peach = peach_rows(path)
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     ws = wb["updated"]
     it = ws.iter_rows(values_only=True)
@@ -127,6 +150,7 @@ def load_reference(path: Path) -> list[dict]:
             "eur": _num(g("eur")), "paid": _date(g("paid")),
             "paid_amt": _num(g("paid_amt")), "comment": _txt(g("comment")),
             "acc": _date(g("acc")),
+            "peach": n in peach,
         })
     wb.close()
     return rows
@@ -172,6 +196,7 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
                 "status": st, "paid_date": row["paid"],
                 "comment": (row["comment"] or f"{status} (imported)")[:600],
                 "acc_scheduled_date": row["acc"], "paid_amount": row["paid_amt"],
+                "finalised": None if row["paid"] else (0 if row["peach"] else 1),
             })
             continue
 
@@ -220,6 +245,8 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
                         v["amount"], v["currency"] = amt, cur
                 v["invoice_no"] = row["doc"]
                 v["vendor_entity"] = row["vendor"] or None
+                if v.get("status") != "Paid":
+                    v["finalised"] = 0 if row["peach"] else 1
                 v["acc_scheduled_date"] = row["acc"]
                 if v.get("status") == "Paid" and row["paid_amt"]:
                     v["paid_amount"] = row["paid_amt"]
@@ -258,9 +285,9 @@ def backfill(states: dict, charges: list) -> int:
 
 
 SYNC_LINE_FIELDS = ("status", "request_date", "paid_date", "amount", "currency", "invoice_no",
-                    "comment", "vendor_entity", "acc_scheduled_date", "paid_amount")
+                    "comment", "vendor_entity", "acc_scheduled_date", "paid_amount", "finalised")
 SYNC_MANUAL_FIELDS = ("status", "request_date", "paid_date", "due_date", "amount", "currency",
-                      "doc_no", "comment", "acc_scheduled_date", "paid_amount", "vendor")
+                      "doc_no", "comment", "acc_scheduled_date", "paid_amount", "vendor", "finalised")
 SEED_WHO = "seed: payment request workbook"
 
 
