@@ -164,8 +164,35 @@ def test_data():
               for r in rows), "every request date is a Tuesday or Friday")
 
 
+def test_uat_rules():
+    """Rules added after the 6 Oct 2026 UAT."""
+    import update_cache as U
+    check(U._iso("2026-10-24T17:30:00Z") == "2026-10-25", "Cin7 UTC timestamp -> Perth date")
+    check(U._iso("2026-10-24T03:00:00Z") == "2026-10-24", "morning UTC stays the same Perth day")
+    rule = T.parse_terms({"terms": "20% Deposit, 80% against copy of shipping docs", "deposit_pct": "20"})
+    cal = {"deposit_rate": 0.33, "deposit_pos": 36, "anchor": "eta", "offset_days": -9, "n": 51}
+    r2 = P._calibrated(rule, cal)
+    check(r2["deposit_pct"] == 0 and r2["balance_anchor"] == "eta" and r2["balance_offset"] == -9,
+          "rarely-used deposit dropped, timing from history")
+    check(P._calibrated(rule, {"deposit_rate": 0.9, "deposit_pos": 10})["deposit_pct"] == 20,
+          "a deposit the team still uses is kept")
+    po = {"is_open": True, "stage_raw": "New", "is_approved": False, "supplier": "X", "po_date": "2026-10-01",
+          "eta_cin7": "2026-12-01", "value_usd": 100.0, "usd_exact": True, "ship": {}, "state": "WA"}
+    lines, st = P.auto_lines({"pos": {"PO-50001": po}}, [], {}, {}, {})
+    rows, _ = P.merge(lines, {}, [], D("2026-10-05"), 4)
+    check(all(r["status"] == "Awaiting Approval" and not r["in_window"] for r in rows),
+          "unapproved New PO is listed but never requested")
+    po2 = dict(po, stage_raw="On Its Way", is_approved=True)
+    lines, _ = P.auto_lines({"pos": {"PO-50002": po2}}, [], {}, {}, {})
+    rows, _ = P.merge(lines, {"PO-50002|balance": {"status": "Requested", "request_date": "2026-10-06",
+                                                    "amount": 99.0}}, [], D("2026-10-05"), 4)
+    full = [r for r in rows if r["kind"] == "full"][0]
+    check(full["status"] == "Requested" and full["amount"] == 99.0,
+          "a record on the old balance line carries over to the single full payment")
+
+
 def main() -> int:
-    for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_data):
+    for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

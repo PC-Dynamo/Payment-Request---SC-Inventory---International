@@ -30,6 +30,14 @@ REQUEST_WEEKDAYS = (1, 4)                 # Tuesday, Friday
 BULK_STAGES = {"Production-China Stock", "In Stock China Warehouse"}
 # By these stages a pre-shipment payment has necessarily been made.
 SHIPPED_STAGES = {"On Its Way", "Dispatched"}
+# The team requests a deposit about this many days after the PO is approved
+# (median 5-6 days in the payment workbook). A deposit on an approved PO older
+# than DEPOSIT_ASSUME_DAYS is taken as paid unless someone records otherwise.
+DEPOSIT_LAG_DAYS = 6
+DEPOSIT_ASSUME_DAYS = 21
+# Below this share of recent POs with a deposit, a supplier is treated as
+# "full payment" by default (UAT 6 Oct 2026: Kpower 33%, Great Century 0%).
+DEPOSIT_RATE_MIN = 0.5
 
 
 def _d(s) -> dt.date | None:
@@ -78,12 +86,47 @@ def po_list(text: str) -> list[str]:
 
 
 # ------------------------------------------------------------------ auto lines
-def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict) -> tuple[list[dict], dict]:
+def _calibrated(rule: dict, cal: dict | None) -> dict:
+    """Apply what the team's own payment history says to the master-data rule.
+    Percentages stay from master-data; whether a deposit is used, and when the
+    balance is requested, follow practice where there is enough history."""
+    if not cal:
+        return rule
+    rule = dict(rule)
+    notes = []
+    rate = cal.get("deposit_rate")
+    if rate is not None and rate < DEPOSIT_RATE_MIN and rule["deposit_pct"]:
+        notes.append(f"no deposit by default - only {rate:.0%} of {cal.get('deposit_pos')} recent POs had one")
+        rule["deposit_pct"] = 0.0
+    if cal.get("anchor") and cal.get("n", 0) >= 5:
+        off = int(cal["offset_days"])
+        where = "ETD" if cal["anchor"] == "etd" else "forwarder ETA"
+        rule["balance_anchor"], rule["balance_offset"] = cal["anchor"], off
+        notes.append(f"requested {abs(off)} days {'before' if off <= 0 else 'after'} {where} "
+                     f"(team history, {cal['n']} payments)")
+    if notes:
+        dep = rule["deposit_pct"]
+        head = f"{dep:g}% deposit after approval; {100 - dep:g}% balance" if dep else "100%"
+        rule["rule"] = f"{head} - " + "; ".join(notes)
+        rule["source"] = f"{rule['source']} + team history"
+    return rule
+
+
+def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
+               calibration: dict | None = None, states: dict | None = None) -> tuple[list[dict], dict]:
     book = T.TermsBook(terms_rows, overrides.get("term_aliases"))
+    cal_by = {k: v for k, v in ((calibration or {}).get("suppliers") or {}).items()}
+    # Per PO, what people already recorded decides the split: a recorded
+    # deposit/balance keeps two lines, a recorded full payment keeps one.
+    recorded: dict[str, set] = {}
+    for lid in (states or {}):
+        po_ref, _, kind = lid.partition("|")
+        recorded.setdefault(po_ref, set()).add(kind)
     special = {M._key(k): v for k, v in (overrides.get("special_arrangements") or {}).items()}
     transit = overrides.get("transit_weeks") or {}
     lines: list[dict] = []
-    stats = {"open_pos": 0, "bulk_excluded": 0, "no_terms": set(), "no_eta": 0}
+    stats = {"open_pos": 0, "bulk_excluded": 0, "no_terms": set(), "no_eta": 0,
+             "awaiting_approval": 0, "calibrated": 0}
 
     for ref, po in sorted(cache.get("pos", {}).items()):
         if not po.get("is_open"):
@@ -96,8 +139,17 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict) -> tuple[li
         trow = book.match(po["supplier"])
         sp = special.get(M._key((trow or {}).get("supplier_name") or po["supplier"]))
         rule = T.parse_terms(trow, sp)
+        if not sp:
+            cal = cal_by.get(M._key(po["supplier"]))
+            if cal:
+                rule = _calibrated(rule, cal)
+                stats["calibrated"] += 1
         if not trow and not sp:
             stats["no_terms"].add(po["supplier"])
+        # Unapproved New POs are drafts in Cin7: nothing is requested on them.
+        awaiting = po.get("stage_raw") in ("New", "NEW") and not po.get("is_approved")
+        if awaiting:
+            stats["awaiting_approval"] += 1
 
         eta_port = _d(ship.get("eta_shipper"))
         eta_cin7 = _d(po.get("eta_cin7")) or _d(ship.get("eta"))
@@ -153,9 +205,18 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict) -> tuple[li
         }
         usd = float(po.get("value_usd") or 0)
         dep = float(rule["deposit_pct"] or 0)
+        rec = recorded.get(ref, set())
+        if "deposit" in rec and not dep:
+            # People recorded a deposit on this PO: keep the split, at the
+            # master-data percentage (or 30% if master-data has none). A balance
+            # alone proves nothing - the 25 Sep seed filed plain "For Payment"
+            # rows under "balance" while the PO still had two lines.
+            dep = float(T.parse_terms(trow, sp)["deposit_pct"] or 30)
+        elif "full" in rec:
+            dep = 0.0
         mile = []
         if dep:
-            mile.append(("deposit", f"Deposit {dep:g}%", dep, "order", 0))
+            mile.append(("deposit", f"Deposit {dep:g}%", dep, "order", DEPOSIT_LAG_DAYS))
             mile.append(("balance", f"Balance {100 - dep:g}%", 100 - dep,
                          rule["balance_anchor"], rule["balance_offset"]))
         else:
@@ -166,8 +227,10 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict) -> tuple[li
             due = a + dt.timedelta(days=offset) if a else None
             # What must already have been paid, given how far the PO has got.
             assumed = None
-            if kind == "deposit" and po.get("past_deposit_stage"):
-                assumed = f"deposit assumed paid - PO is {po.get('stage')}"
+            po_age = (dt.date.today() - anchors["order"]).days if anchors["order"] else 999
+            if kind == "deposit" and po.get("past_deposit_stage") and (
+                    po.get("stage_raw") in SHIPPED_STAGES or po_age > DEPOSIT_ASSUME_DAYS):
+                assumed = f"deposit assumed paid - PO is {po.get('stage')}, raised {po_age} days ago"
             elif (po.get("stage_raw") in SHIPPED_STAGES and
                   (anchor == "order" or (anchor == "etd" and offset < 0))):
                 assumed = f"pre-shipment payment assumed paid - PO is {po.get('stage')}"
@@ -182,6 +245,7 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict) -> tuple[li
                 "due_auto": _s(due),
                 "due_anchor": anchor,
                 "assumed_paid": assumed,
+                "awaiting_approval": awaiting,
             })
     stats["no_terms"] = sorted(stats["no_terms"])
     return lines, stats
@@ -206,6 +270,8 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
     def finish(row: dict, due: dt.date | None, st: dict) -> dict:
         req = _d(st.get("request_date"))
         status = st.get("status")
+        if not status and row.get("awaiting_approval"):
+            status = "Awaiting Approval"
         if not status:
             if row.get("assumed_paid"):
                 status = "Paid"
@@ -216,7 +282,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
                 status = "Date TBC"
             else:
                 status = "For Payment" if request_day_for(due, today) <= nxt else "Forecast"
-        if req is None and status not in ("Paid", "Not Payable", "Date TBC"):
+        if req is None and status not in ("Paid", "Not Payable", "Date TBC", "Awaiting Approval"):
             req = request_day_for(due, today) if due else nxt
         row.update({
             "status_stored": st.get("status") or "",
@@ -238,11 +304,28 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
         })
         return row
 
+    # What was actually invoiced / paid as a deposit, per PO, so the balance is
+    # the PO value less the real deposit rather than a fixed percentage of it.
+    dep_actual = {}
+    for ln in auto:
+        if ln["kind"] == "deposit":
+            st = states.get(ln["line_id"], {})
+            v = st.get("paid_amount") if st.get("paid_amount") is not None else st.get("amount")
+            if v is not None and (st.get("currency") or "USD") == "USD":
+                dep_actual[ln["po"]] = float(v)
     for ln in auto:
         st = states.get(ln["line_id"], {})
+        if not st and ln["kind"] == "full" and f"{ln['po']}|deposit" not in states:
+            # Recorded against the old "balance" line before this PO became a
+            # single payment: it is the same payment, so it carries over.
+            st = states.get(f"{ln['po']}|balance", {})
         row = dict(ln)
         row["currency"] = st.get("currency") or ln["currency"]
-        row["amount"] = st["amount"] if st.get("amount") is not None else ln["amount_auto"]
+        auto_amt = ln["amount_auto"]
+        if ln["kind"] == "balance" and ln["po"] in dep_actual and ln.get("po_value_usd"):
+            auto_amt = round(max(0.0, float(ln["po_value_usd"]) - dep_actual[ln["po"]]), 2)
+            row["amount_basis"] = "PO value less the deposit recorded"
+        row["amount"] = st["amount"] if st.get("amount") is not None else auto_amt
         row["amount_overridden"] = st.get("amount") is not None
         row["invoice_no"] = st.get("invoice_no") or ""
         row["pay_type"] = st.get("pay_type") or ln.get("pay_type", "")

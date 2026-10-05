@@ -53,7 +53,10 @@ def build_payload() -> dict:
     cache = json.loads(CACHE.read_text(encoding="utf-8"))
     ov = load_overrides()
     terms = S.load_payment_terms()
-    auto, stats = P.auto_lines(cache, terms.get("payment_terms") or [], ov)
+    cal_path = HERE / "calibration.json"
+    calibration = json.loads(cal_path.read_text(encoding="utf-8")) if cal_path.exists() else {}
+    auto, stats = P.auto_lines(cache, terms.get("payment_terms") or [], ov,
+                               calibration, L.all_line_states())
     meta = cache.get("meta", {})
     branch_state, branch_name = _branch_maps()
     now = dt.datetime.now(AWST)
@@ -74,6 +77,7 @@ def build_payload() -> dict:
             "unmapped_skus": meta.get("unmapped_skus") or [],
             "unknown_suppliers": meta.get("unknown_suppliers") or [],
             "stats": stats,
+            "calibration": {k: calibration.get(k) for k in ("built", "source", "deposit_since")},
             "run_log": meta.get("run_log") or [],
             "forecast_weeks": int(ov.get("forecast_weeks") or 4),
             "cin7_url_template": ov.get("cin7_url_template") or "",

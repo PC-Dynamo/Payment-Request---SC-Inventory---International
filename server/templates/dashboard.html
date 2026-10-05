@@ -96,6 +96,7 @@ table.reg{border-collapse:separate;border-spacing:0;width:100%;min-width:1480px;
 .st-Paid{background:var(--good-bg);color:var(--good)}
 .st-Forecast,.st-DateTBC{background:#f1f3f7;color:var(--muted)}
 .st-OnHold{background:var(--bad-bg);color:var(--bad)}
+.st-AwaitingApproval{background:#f1f3f7;color:#7b6aa8;font-style:italic}
 .st-NotPayable{background:#f1f3f7;color:#98a1b0;text-decoration:line-through}
 .icon{border:0;background:none;padding:0 4px;color:var(--muted)}
 .icon:hover{color:var(--accent)}
@@ -232,10 +233,10 @@ const dd=s=>{if(!s)return"";const[y,m,d]=String(s).slice(0,10).split("-");return
 const SER=["--s1","--s2","--s3","--s4","--s5"].map(v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim());
 const CURS=["USD","AUD","GBP","EUR"];
 let DATA=[],META=null,charts={},sortKey=null,sortDir=1,selected=new Set(),TAB="reg",SPECIAL={};
-const F0={win:"window",state:"",seg:"",cur:"",sup:"",stage:"",status:"",type:"",q:"",reqF:"",reqT:"",etdF:"",etdT:"",etaF:"",etaT:""};
+const F0={win:"open",state:"",seg:"",cur:"",sup:"",stage:"",status:"",type:"",q:"",reqF:"",reqT:"",etdF:"",etdT:"",etaF:"",etaT:""};
 const F={...F0};
-try{Object.assign(F,JSON.parse(localStorage.getItem("prf2")||"{}"));F.q=""}catch(e){}
-function saveF(){try{localStorage.setItem("prf2",JSON.stringify(F))}catch(e){}}
+try{Object.assign(F,JSON.parse(localStorage.getItem("prf3")||"{}"));F.q=""}catch(e){}
+function saveF(){try{localStorage.setItem("prf3",JSON.stringify(F))}catch(e){}}
 function toast(t){const e=$("#toast");e.textContent=t;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",2600)}
 async function api(url,opt={}){
   const r=await fetch(url,{headers:{"Content-Type":"application/json"},credentials:"same-origin",...opt});
@@ -276,7 +277,7 @@ function buildFilters(){
 function fillSelects(){
   opts("#fSup",suppliers(),"All suppliers");
   opts("#fStage",[...new Set(DATA.map(r=>r.stage).filter(Boolean))].sort(),"All stages");
-  opts("#fStatus",["For Payment","Requested","Paid","Paid (assumed)","On Hold","Not Payable","Forecast","Date TBC"],"All statuses");
+  opts("#fStatus",["For Payment","Requested","Paid","Paid (assumed)","On Hold","Not Payable","Forecast","Date TBC","Awaiting Approval"],"All statuses");
   opts("#fType",payTypes(),"All types");
   ["sup","stage","status","type"].forEach(k2=>{const el=$({sup:"#fSup",stage:"#fStage",status:"#fStatus",type:"#fType"}[k2]);if(F[k2])el.value=F[k2];if(el.value!==F[k2])F[k2]=el.value});
 }
@@ -301,7 +302,9 @@ function passBase(r){  // every filter except the Show window (KPI cards are win
   if(F.q&&![r.po,r.vendor_entity,r.supplier,r.invoice_no,r.branch,r.pay_type,r.comment,r.container].join(" ").toLowerCase().includes(F.q.toLowerCase()))return false;
   return true;
 }
-const rowsF=()=>DATA.filter(r=>passBase(r)&&inWin(r));
+// Picking a status means "find those lines": it searches every line rather than
+// only the Show window (UAT: "Paid" returned nothing inside the 4-week view).
+const rowsF=()=>DATA.filter(r=>passBase(r)&&(F.status?true:inWin(r)));
 function activeFilterCount(){return ["state","seg","cur","sup","stage","status","type","q","reqF","reqT","etdF","etdT","etaF","etaT"].filter(x=>F[x]).length}
 
 // ------------------------------------------------------------------ KPIs + totals
@@ -318,7 +321,7 @@ function renderKpis(){
     ["",`${META.forecast_weeks}-week rolling · AUD`,"$"+fmt(sum(win,"AUD")),`${win.filter(r=>r.currency==="AUD").length} AUD lines`],
     ["","Requested, awaiting payment",`$${k(sum(waiting,"USD"))} USD`,`$${k(sum(waiting,"AUD"))} AUD · ${waiting.length} lines`],
     [od.length?"bad":"","Overdue",String(od.length),"unpaid lines past due date"],
-    ["","Open POs with unpaid lines",String(pos.size),`${tbc.length} lines with no ETA yet`],
+    ["","Open POs with unpaid lines",String(pos.size),`${tbc.length} with no ETA yet · ${base.filter(r=>r.status==="Awaiting Approval").length} awaiting approval`],
   ];
   const other=["GBP","EUR"].map(c=>[c,sum(win,c)]).filter(x=>x[1]);
   if(other.length)K.push(["",`${META.forecast_weeks}-week · GBP / EUR`,other.map(([c,v])=>`${c} ${k(v)}`).join(" · "),"UK / EU suppliers"]);
@@ -331,7 +334,7 @@ function renderTotals(rows){
   $("#totals").innerHTML=`<span>${n?`<b>${n}</b> filter${n>1?"s":""} ·`:""} <b>${rows.length}</b> lines</span>`+
     parts.map(([c,v])=>`<span>${c} <b>${money(v)}</b></span>`).join("")+
     (paid.length?`<span class="muted">Paid amount: ${paid.map(([c,v])=>`${c} ${money(v)}`).join(" · ")}</span>`:"")+
-    `<span class="sp"></span><span class="muted">${esc(winLabel())}</span>`;
+    `<span class="sp"></span><span class="muted">${esc(F.status?`Status "${F.status}" — all lines searched`:winLabel())}</span>`;
   $("#fCount").textContent=n?`${n} filter${n>1?"s":""} active`:"";
 }
 const winLabel=()=>({request:`This request (${dd(META.next_request)})`,window:`${META.forecast_weeks}-week rolling to ${dd(META.horizon)}`,open:"All unpaid",all:"All lines incl. paid"})[F.win];
@@ -413,7 +416,7 @@ function renderTable(){
   $("#cols").innerHTML=COLS.map(c=>`<col style="width:${(c[2]/tw*100).toFixed(3)}%">`).join("");
   $("#tbl thead").innerHTML="<tr>"+COLS.map(c=>`<th data-k="${c[0]}" class="${c[3]==="money"?"num":""}">${esc(c[1])}${sortKey===c[0]?(sortDir>0?" ▲":" ▼"):""}</th>`).join("")+"</tr>";
   const group=$("#fGroup").checked&&!sortKey;
-  const gname=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.request_date?`Request ${dd(x.request_date)}${x.request_date===META.next_request?" (next)":""}`:"Date TBC — no ETA yet";
+  const gname=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.status==="Awaiting Approval"?"Awaiting PO approval in Cin7 (New, not approved) — not requested yet":x.request_date?`Request ${dd(x.request_date)}${x.request_date===META.next_request?" (next)":""}`:"Date TBC — no ETA yet";
   const gtot={};if(group)rows.forEach(x=>{const g=gname(x);(gtot[g]=gtot[g]||[]).push(x)});
   let html="",last=null;
   for(const r of rows){
@@ -618,7 +621,9 @@ function renderNotes(){
     `<b>Supplier &amp; Branch master</b>: ${esc(m.master&&m.master.status)}, file date ${esc(m.master&&m.master.file_date)}.`,
     `<b>Scope</b>: ${s.open_pos} open international POs; ${s.bulk_excluded} China-stock bulk orders excluded (no vessel / ETA yet). Requests go out Tuesday and Friday; a line joins the last request day on or before its due date.`,
     `<b>USD</b>: Cin7 holds POs in landed AUD, so USD = qty × Cin7 costUSD, pinned per PO line when first seen. Values marked ~ are estimated — enter the invoice amount to override.`,
-    `<b>Paid (assumed)</b>: deposits of POs already in production, and pre-shipment payments of POs on the water, until someone records otherwise.`,
+    `<b>When a payment is requested</b>: percentages come from master-data terms; whether a deposit is taken and how many days before ETD / forwarder ETA the balance is requested follow the team's own payment history (${esc(m.calibration&&m.calibration.source||"payment workbook")}). Each line's rule is shown in ✎.`,
+    `<b>Awaiting Approval</b>: New POs not yet approved in Cin7 are drafts — listed, never requested. A deposit is requested ${"6"} days after approval.`,
+    `<b>Paid (assumed)</b>: deposits of approved POs older than 3 weeks or on the water, and pre-shipment payments of POs on the water, until someone records otherwise.`,
     `<b>Filters</b>: ETA filters on the forwarder ETA, or the Cin7 ETA when there is none. Totals and the Excel export follow every filter.`,
     s.no_terms&&s.no_terms.length?`<b>No payment terms in master-data</b> (defaulted to full payment 7 days before ETA): ${s.no_terms.map(esc).join(", ")}.`:"",
     m.unmapped_skus&&m.unmapped_skus.length?`<b>SKUs not in the master</b> after re-reading it: ${m.unmapped_skus.map(esc).join(", ")}.`:"",

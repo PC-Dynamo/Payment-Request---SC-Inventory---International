@@ -76,9 +76,18 @@ _NONSTOCK = [
 
 
 def _iso(v) -> str | None:
+    """Cin7 date -> Perth calendar date. Cin7 sends UTC ('...T17:30:00Z'); taking
+    the first 10 characters would put anything after 16:00 UTC on the wrong day."""
     if not v:
         return None
-    s = str(v)[:10]
+    raw = str(v).strip()
+    if "T" in raw and raw.endswith("Z"):
+        try:
+            return (dt.datetime.fromisoformat(raw[:19]).replace(tzinfo=dt.timezone.utc)
+                    .astimezone(AWST).date().isoformat())
+        except ValueError:
+            pass
+    s = raw[:10]
     try:
         dt.date.fromisoformat(s)
         return s

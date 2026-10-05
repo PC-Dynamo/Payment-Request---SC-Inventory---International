@@ -1,0 +1,181 @@
+{
+ "built": "2026-10-05 09:10",
+ "source": "Payment Request for Four-week Rolling Forecast (61).xlsx",
+ "deposit_since": "2026-04-01",
+ "suppliers": {
+  "bodylonger fitness equipment co.,ltd": {
+   "supplier": "BODYLONGER FITNESS EQUIPMENT CO.,LTD",
+   "deposit_rate": 0.0,
+   "deposit_pos": 15,
+   "anchor": "eta",
+   "offset_days": -9,
+   "n": 42,
+   "mad": 2.5
+  },
+  "dkcity / tung keng enterprise co., ltd": {
+   "supplier": "DKCITY / Tung Keng Enterprise Co., Ltd",
+   "anchor": "etd",
+   "offset_days": -12,
+   "n": 6,
+   "mad": 7.0
+  },
+  "fdf limited": {
+   "supplier": "FDF Limited",
+   "deposit_rate": 0.0,
+   "deposit_pos": 6,
+   "anchor": "eta",
+   "offset_days": -2,
+   "n": 16,
+   "mad": 8.5
+  },
+  "imbell fitness": {
+   "supplier": "Imbell fitness",
+   "deposit_rate": 0.0,
+   "deposit_pos": 22,
+   "anchor": "eta",
+   "offset_days": -10,
+   "n": 61,
+   "mad": 3
+  },
+  "impulse": {
+   "supplier": "Impulse",
+   "deposit_rate": 0.08,
+   "deposit_pos": 24,
+   "anchor": "etd",
+   "offset_days": -7,
+   "n": 39,
+   "mad": 9
+  },
+  "iron master": {
+   "supplier": "Iron Master",
+   "deposit_rate": 0.0,
+   "deposit_pos": 25,
+   "anchor": "eta",
+   "offset_days": -10,
+   "n": 81,
+   "mad": 3
+  },
+  "kpower": {
+   "supplier": "Kpower",
+   "deposit_rate": 0.33,
+   "deposit_pos": 36,
+   "anchor": "eta",
+   "offset_days": -9,
+   "n": 51,
+   "mad": 3
+  },
+  "nantong ruiming supply chain co.,ltd.": {
+   "supplier": "NANTONG RUIMING SUPPLY CHAIN CO.,LTD.",
+   "deposit_rate": 0.0,
+   "deposit_pos": 26,
+   "anchor": "eta",
+   "offset_days": -15,
+   "n": 13,
+   "mad": 0
+  },
+  "qingdao csp industry and trade co.,ltd": {
+   "supplier": "Qingdao CSP Industry and Trade Co.,ltd",
+   "deposit_rate": 0.5,
+   "deposit_pos": 38,
+   "anchor": "eta",
+   "offset_days": -11,
+   "n": 86,
+   "mad": 5.0
+  },
+  "qingdao great century plastic co.,ltd": {
+   "supplier": "Qingdao Great Century Plastic Co.,Ltd",
+   "deposit_rate": 0.0,
+   "deposit_pos": 15,
+   "anchor": "etd",
+   "offset_days": -38,
+   "n": 43,
+   "mad": 14
+  },
+  "rizhao pioneer barbell & fitness inc.": {
+   "supplier": "RIZHAO PIONEER BARBELL & FITNESS INC.",
+   "deposit_rate": 0.5,
+   "deposit_pos": 4,
+   "anchor": "eta",
+   "offset_days": -63,
+   "n": 11,
+   "mad": 19
+  },
+  "rizhao land sea fitness goods ltd (ckb)": {
+   "supplier": "Rizhao Land Sea Fitness Goods Ltd (CKB)",
+   "deposit_rate": 0.84,
+   "deposit_pos": 19,
+   "anchor": "eta",
+   "offset_days": -10,
+   "n": 46,
+   "mad": 3.0
+  },
+  "shandong crossmax fitness co.,ltd": {
+   "supplier": "SHANDONG CROSSMAX FITNESS CO.,LTD",
+   "deposit_rate": 1.0,
+   "deposit_pos": 5,
+   "anchor": "etd",
+   "offset_days": -10,
+   "n": 5,
+   "mad": 0
+  },
+  "shandong vog sports products co ltd": {
+   "supplier": "Shandong VOG Sports Products Co Ltd",
+   "deposit_rate": 0.9,
+   "deposit_pos": 10,
+   "anchor": "eta",
+   "offset_days": -10,
+   "n": 15,
+   "mad": 5
+  },
+  "skyler rubber products of vietnam": {
+   "supplier": "Skyler Rubber Products of Vietnam",
+   "anchor": "eta",
+   "offset_days": 13,
+   "n": 20,
+   "mad": 3.5
+  },
+  "watson gym equipment": {
+   "supplier": "Watson Gym Equipment",
+   "deposit_rate": 1.0,
+   "deposit_pos": 5
+  },
+  "xiamen k-life sport co., ltd": {
+   "supplier": "Xiamen K-Life Sport Co., Ltd",
+   "deposit_rate": 1.0,
+   "deposit_pos": 4,
+   "anchor": "eta",
+   "offset_days": -8,
+   "n": 13,
+   "mad": 5
+  },
+  "zhejiang elina fitness technology co ltd": {
+   "supplier": "Zhejiang Elina Fitness Technology Co Ltd",
+   "deposit_rate": 1.0,
+   "deposit_pos": 11,
+   "anchor": "eta",
+   "offset_days": -51,
+   "n": 6,
+   "mad": 2.5
+  },
+  "zhejiang merach tech": {
+   "supplier": "Zhejiang Merach Tech",
+   "deposit_rate": 1.0,
+   "deposit_pos": 8,
+   "anchor": "eta",
+   "offset_days": -12,
+   "n": 7,
+   "mad": 3
+  }
+ },
+ "unmatched_names": [
+  "",
+  "IVIVA International Corp.",
+  "JUNXIA GYM EQUIPMENT",
+  "Jean",
+  "Lancenfit",
+  "Real Leader",
+  "Shandong Brightway Fitness Equipment Co. Ltd",
+  "Shandong Dongli Health And Technology",
+  "TIANZHAN FITNESS EQUIPMENT"
+ ]
+}

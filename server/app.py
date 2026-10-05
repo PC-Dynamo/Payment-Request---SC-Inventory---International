@@ -102,6 +102,16 @@ def _known_auto(line_id: str) -> bool:
     return any(ln["line_id"] == line_id for ln in p.get("auto_lines") or [])
 
 
+def _ledger_id(line_id: str) -> str:
+    """Where an auto line's record lives. A PO that became a single "full"
+    payment keeps using the "balance" record made before the split changed."""
+    po_ref, _, kind = line_id.partition("|")
+    if kind == "full" and not L.stored(line_id) and L.stored(f"{po_ref}|balance") \
+            and not L.stored(f"{po_ref}|deposit"):
+        return f"{po_ref}|balance"
+    return line_id
+
+
 @app.route("/api/line", methods=["POST"])
 def api_line():
     body = request.get_json(silent=True) or {}
@@ -124,7 +134,7 @@ def api_line():
                 changes["vendor"] = changes.pop("vendor_entity")
             row = L.update_manual(int(line_id[1:]), changes, _who())
         elif _known_auto(line_id):
-            row = L.set_line_state(line_id, changes, _who())
+            row = L.set_line_state(_ledger_id(line_id), changes, _who())
         else:
             return _bad("unknown line", 404)
     except KeyError:
@@ -172,7 +182,7 @@ def api_submit():
         if r["source"] == "manual":
             L.update_manual(r["manual_id"], ch, who)
         else:
-            L.set_line_state(r["line_id"], ch, who)
+            L.set_line_state(_ledger_id(r["line_id"]), ch, who)
         done += 1
     return jsonify(ok=True, requested=done, request_date=when["next_request"])
 
