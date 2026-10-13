@@ -6,15 +6,15 @@ Two steps, deliberately separate:
 
   auto_lines(cache, ...)   Cin7-derived. One line per payment milestone of every
                            open international PO (deposit / balance / full).
-                           Rebuilt on each refresh (Tue + Fri 07:00 AWST).
+                           Rebuilt on each refresh (Mon + Wed 13:00 AWST).
   merge(auto, ledger, day) Today-dependent. Applies what people recorded, works
                            out each line's payment-request date and status, and
                            adds the manual (AUD) lines. Runs on every page load,
                            so the list is right on a Wednesday as well.
 
-Payment requests go out on the refresh days, Tuesday and Friday. A line is
-requested on the last request day on or before it falls due - or on the next
-request day if that has already passed (overdue lines are never dropped).
+Pay runs: Tuesday for supplier payments and USD freight, Thursday for AUD
+charges. A line joins the last pay run on or before it falls due - or the next
+run if that has already passed (overdue lines are never dropped).
 """
 from __future__ import annotations
 
@@ -27,7 +27,8 @@ import terms as T
 # Pay runs, as the team actually runs them (payment workbook, Jul-Oct 2026):
 # supplier payments and USD freight go in the TUESDAY run (339 of 342 rows),
 # AUD document / handling charges in the THURSDAY run (230 of 238 rows).
-# The app's data refresh (Tue + Fri 07:00 AWST) is a separate schedule.
+# The app's data refresh (Mon + Wed 13:00 AWST, the afternoon before each run)
+# is a separate schedule.
 PAY_WEEKDAYS = {"USD": (1,), "GBP": (1,), "EUR": (1,), "AUD": (3,)}
 DEFAULT_PAY_WEEKDAYS = (1,)
 # Bulk orders sitting in China are the General Planning app's flow: no vessel,
@@ -205,6 +206,17 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
 
         eta_port = _d(ship.get("eta_shipper"))
         eta_cin7 = _d(po.get("eta_cin7")) or _d(ship.get("eta"))
+        # Monday's ETA updates reach Cin7 mostly before 13:00 (81% since Aug),
+        # but the Shipment Schedule re-reads forwarder ETAs only at 14:00. This
+        # app reads Cin7's own ETA live, so when that has moved since the
+        # Shipment Schedule's last run, move the forwarder ETA by the same amount
+        # (Cin7 ETA = forwarder ETA + a fixed buffer, usually 7 days). One day is
+        # ignored: the two apps round Cin7's UTC timestamps differently.
+        eta_shifted = 0
+        ship_cin7 = _d(ship.get("eta"))
+        if eta_port and eta_cin7 and ship_cin7 and abs((eta_cin7 - ship_cin7).days) > 1:
+            eta_shifted = (eta_cin7 - ship_cin7).days
+            eta_port = eta_port + (eta_cin7 - ship_cin7)
         eta_used = eta_port or eta_cin7
         etd = _d(ship.get("etd"))
         etd_est = False
@@ -222,6 +234,9 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             flags.append(f"USD {po.get('usd_source')}")
         if not eta_port and eta_cin7:
             flags.append("no forwarder ETA - Cin7 ETA used")
+        if eta_shifted:
+            flags.append(f"forwarder ETA moved {eta_shifted:+d} days with Cin7's ETA "
+                         "(Shipment Schedule not refreshed yet)")
         if etd_est and rule["balance_anchor"] == "etd":
             flags.append(f"ETD estimated (ETA - {transit.get(po.get('state') or '', 5)} wks)")
         if po.get("unmapped_skus"):

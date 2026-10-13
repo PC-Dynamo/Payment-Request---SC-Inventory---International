@@ -709,7 +709,7 @@ async function load(first=true){
     const r=await fetch("api/data",{cache:"no-store"});const j=await r.json();
     if(!r.ok)throw new Error(j.error||r.status);
     DATA=j.rows;META=j.meta;SPECIAL=j.special_arrangements||{};
-    $("#sub").innerHTML=`Next pay run <b>Tue ${esc(dd(META.next_request))}</b> (USD: suppliers &amp; freight) · <b>Thu ${esc(dd(META.next_request_aud))}</b> (AUD charges) · refreshed ${esc(META.report_built_awst)} · ETA from Shipment Schedule ${esc(META.shipment&&META.shipment.generated_awst||"—")} · auto-refresh Tue &amp; Fri 07:00 AWST`;
+    $("#sub").innerHTML=`Next pay run <b>Tue ${esc(dd(META.next_request))}</b> (USD: suppliers &amp; freight) · <b>Thu ${esc(dd(META.next_request_aud))}</b> (AUD charges) · refreshed ${esc(META.report_built_awst)} · ETA from Shipment Schedule ${esc(META.shipment&&META.shipment.generated_awst||"—")} · auto-refresh Mon &amp; Wed 13:00 AWST (the afternoon before each pay run)`;
     if(first){buildFilters();let t="reg";try{t=localStorage.getItem("prtab")||"reg"}catch(e){}setTab(t)}else fillSelects();
     render();renderNotes();
   }catch(err){$("#sub").textContent="Could not load the report: "+err.message}

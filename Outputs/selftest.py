@@ -165,8 +165,8 @@ def test_data():
     wm = cache["meta"].get("po_watermark")
     check(bool(wm), "incremental watermark is set")
     rows, _ = P.merge(auto, {}, [], dt.date.today(), 4, payload.get("po_index"), payload.get("branch_state"))
-    check(all(r["request_date"] is None or dt.date.fromisoformat(r["request_date"]).weekday() in (1, 4)
-              for r in rows), "every request date is a Tuesday or Friday")
+    check(all(r["request_date"] is None or dt.date.fromisoformat(r["request_date"]).weekday() in (1, 3)
+              for r in rows), "every pay-run date is a Tuesday or Thursday")
 
 
 def test_uat_rules():
@@ -220,6 +220,15 @@ def test_uat_13oct():
     rule = T.parse_terms(None)
     r2 = P._calibrated(rule, {"deposit_rate": 1.0, "deposit_pos": 5, "deposit_pct": 30})
     check(r2["deposit_pct"] == 30, "a deposit the supplier always takes is added from history")
+    po = {"is_open": True, "stage_raw": "On Its Way", "is_approved": True, "supplier": "X",
+          "po_date": "2026-08-01", "eta_cin7": "2026-10-31", "value_usd": 100.0, "usd_exact": True,
+          "state": "WA", "ship": {"eta": "2026-10-24", "eta_shipper": "2026-10-17", "etd": "2026-09-10"}}
+    lines, _ = P.auto_lines({"pos": {"PO-60002": po}}, [], {}, {}, {})
+    check(lines[0]["eta_port"] == "2026-10-24",
+          "forwarder ETA follows a Cin7 ETA change made before the Shipment Schedule re-reads it")
+    po["eta_cin7"] = "2026-10-25"
+    lines, _ = P.auto_lines({"pos": {"PO-60002": po}}, [], {}, {}, {})
+    check(lines[0]["eta_port"] == "2026-10-17", "a one-day rounding difference is ignored")
 
 
 def main() -> int:

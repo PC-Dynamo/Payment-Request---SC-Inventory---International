@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Scheduled refresh for the Payment Request - SC Inventory - International app.
 #
-# Tuesday and Friday 07:00 AWST - the morning after the team updates ETAs in
-# Cin7 (Mon + Thu) and the Shipment Schedule rebuilds (Mon + Thu 14:00 AWST).
-# Prod runs UTC and AWST = UTC+8, so 07:00 AWST Tue/Fri = 23:00 UTC Mon/Thu:
-#   0 23 * * 1,4  /srv/team/sc/payment-request/refresh-payment.sh
+# Monday and Wednesday 13:00 AWST - the afternoon before each pay run (Tuesday:
+# supplier payments + USD freight; Thursday: AUD charges), after the team's
+# Monday-morning ETA updates in Cin7.
+# (The Shipment Schedule re-reads forwarder ETAs Mon + Thu 14:00; until then
+#  the app shifts forwarder ETAs by any change in Cin7's own ETA.)
+# Prod runs UTC and AWST = UTC+8, so 13:00 AWST Mon/Wed = 05:00 UTC Mon/Wed:
+#   0 5 * * 1,3  /srv/team/sc/payment-request/refresh-payment.sh
 #
-# Payment terms are re-read from master-data on the Tuesday run (weekly).
+# Payment terms are re-read from master-data on the Monday run (weekly).
 # Verifies the payload actually moved rather than trusting the exit code.
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
@@ -25,7 +28,7 @@ docker exec "$C" python -c "import sqlite3; s=sqlite3.connect('/app/Outputs/ledg
 ls -1t backup/ledger_*.db 2>/dev/null | tail -n +61 | xargs -r rm -f
 
 TERMS=""
-[ "$(TZ=Australia/Perth date +%u)" = "2" ] && TERMS="--refresh-terms"
+[ "$(TZ=Australia/Perth date +%u)" = "1" ] && TERMS="--refresh-terms"
 
 for step in "update_cache.py $TERMS" "build_report.py"; do
   # shellcheck disable=SC2086

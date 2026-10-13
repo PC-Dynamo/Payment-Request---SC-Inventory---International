@@ -5,7 +5,8 @@ sources.py - the two caches this app reads from sibling SC apps on 170.64.233.18
   shipment-schedule  /srv/team/sc/shipment-schedule/Outputs/shipment_cache.json
                      ETA to port (forwarder), Cin7 ETA, ETD, container, forwarder.
                      Rebuilt Mon + Thu 14:00 AWST after the team updates ETAs in
-                     Cin7, which is why this app refreshes Tue + Fri 07:00 AWST.
+                     Cin7. This app refreshes Mon + Wed 13:00 AWST and bridges the
+                     gap to Monday's 14:00 run with Cin7's live ETA (payments.py).
   master-data        /srv/team/sc/master-data/data/cache/master_snapshot.json
                      Supplier payment terms. Re-read WEEKLY into
                      cache/payment_terms.json (requirement 10).
@@ -33,7 +34,7 @@ MASTER_MOUNT = Path(os.environ.get("MASTER_SNAPSHOT", "/app/ext/master-data/mast
 
 SHIPMENT_LOCAL = CACHE_DIR / "shipment_cache.json"
 TERMS_CACHE = CACHE_DIR / "payment_terms.json"
-TERMS_REFRESH_DAYS = 6.5    # weekly; 6.5 so a Tuesday run is never missed by minutes
+TERMS_REFRESH_DAYS = 6.5    # weekly; 6.5 so a Monday run is never missed by minutes
 
 # The ETA fields this app needs, and nothing else - the full shipment cache
 # also carries comment logs, which have no business in a payment report.

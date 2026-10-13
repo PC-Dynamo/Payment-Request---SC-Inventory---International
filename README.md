@@ -32,10 +32,10 @@ Live: <https://sc.dynamofitness.au/Applications/payment-request/>
 
 | Data | Source | Refresh |
 |---|---|---|
-| Open POs, AUD value, stage, branch | Cin7 v1 API, **read-only**, `modifiedDate` delta only | Tue + Fri 07:00 AWST |
+| Open POs, AUD value, stage, branch | Cin7 v1 API, **read-only**, `modifiedDate` delta only | Mon + Wed 13:00 AWST (afternoon before each pay run) |
 | USD value | qty × Cin7 `costUSD`, pinned per PO line when first seen | with the POs; product costs weekly |
 | ETA to port, ETD, container, forwarder | Shipment Schedule cache `/srv/team/sc/shipment-schedule` | it rebuilds Mon + Thu 14:00 AWST |
-| Payment terms | SC Master Data cache `/srv/team/sc/master-data` | **weekly** (Tuesday run) |
+| Payment terms | SC Master Data cache `/srv/team/sc/master-data` | **weekly** (Monday run) |
 | Branch → state, SKU → Retail/Commercial, supplier → Local/International | *Supplier and Branch Info.xlsx* (OneDrive / SharePoint) | every run; forced re-read when a new SKU or supplier cannot be identified |
 | Status, paid dates, manual lines | `Outputs/ledger.db` (SQLite), people's edits | live |
 
@@ -71,7 +71,7 @@ Outputs/
   selftest.py           rules + data checks
   overrides.json        special arrangements, aliases, transit weeks
 server/                 Flask app, template, Dockerfile, compose
-refresh-payment.sh      the Tue/Fri cron job
+refresh-payment.sh      the Mon/Wed cron job
 ```
 
 ## Run locally (Windows)
@@ -100,6 +100,8 @@ docker exec payment-request-app-1 python /app/Outputs/build_report.py
   with `/_authz`, so access is granted per person on the admin page (slug
   `payment-request`).
 - Cin7 credentials come from the Shipment Schedule app's `server/.env`.
-- Cron (UTC; 07:00 AWST Tue/Fri = 23:00 UTC Mon/Thu):
-  `0 23 * * 1,4 /srv/team/sc/payment-request/refresh-payment.sh`
+- Cron (UTC; 13:00 AWST Mon/Wed = 05:00 UTC Mon/Wed):
+  `0 5 * * 1,3 /srv/team/sc/payment-request/refresh-payment.sh`
+- Monday 13:00 runs before the Shipment Schedule's 14:00 ETA re-read; the app moves
+  forwarder ETAs by any change in Cin7's own ETA to bridge that hour.
 - Back up `Outputs/ledger.db`: it is the only data here that cannot be rebuilt from Cin7.
