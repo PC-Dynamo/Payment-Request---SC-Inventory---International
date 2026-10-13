@@ -40,7 +40,8 @@ import terms as T  # noqa: E402
 
 OUT = HERE / "calibration.json"
 CACHE = HERE / "payment_cache.json"
-DEPOSIT_SINCE = "2026-04-01"      # deposit habits changed; only recent POs count
+DEPOSIT_WINDOWS = (100, 200)      # days of POs looked at for "does it take a deposit"
+TIMING_WINDOW_DAYS = 120          # days of payments looked at for timing (else all)
 MIN_TIMING_ROWS = 5
 MIN_DEPOSIT_POS = 4
 
@@ -109,29 +110,63 @@ def main() -> int:
             continue
         groups.setdefault(name, []).append(r)
 
+    # Measure against the SAME dates the app applies the rule to: the PO's
+    # ETD / forwarder ETA from Cin7 + Shipment Schedule where the PO is still in
+    # the cache, the workbook's typed dates only for older POs. (Crossmax: the
+    # workbook said ETD 16 Oct, Cin7 says 25 Oct - the ready date - and the
+    # balance went on 20 Oct, i.e. 5 days before the date the app sees.)
+    from_cache = 0
+    for r in rows:
+        s = (cache["pos"].get(r["po"]) or {}).get("ship") or {}
+        if s.get("etd") or s.get("eta_shipper"):
+            r["etd"] = s.get("etd") or r["etd"]
+            r["etaf"] = s.get("eta_shipper") or r["etaf"]
+            from_cache += 1
+
+    # Habits change (CSP stopped taking deposits in July 2026), so both figures
+    # come from a recent window of the workbook, widened only when too thin.
+    latest = max((r["entry"] or "") for r in rows) or dt.date.today().isoformat()
+    since = lambda days: (dt.date.fromisoformat(latest) - dt.timedelta(days=days)).isoformat()  # noqa: E731
+
     out = {}
     for name, rs in sorted(groups.items()):
         rec: dict = {"supplier": name}
-        recent = {r["po"] for r in rs if (r["entry"] or "") >= DEPOSIT_SINCE}
+        for days in DEPOSIT_WINDOWS:
+            recent = {r["po"] for r in rs if (r["entry"] or "") >= since(days)}
+            if len(recent) >= MIN_DEPOSIT_POS:
+                break
         dep = {r["po"] for r in rs if "deposit" in r["status"] and r["po"] in recent}
         if len(recent) >= MIN_DEPOSIT_POS:
             rec["deposit_rate"] = round(len(dep) / len(recent), 2)
             rec["deposit_pos"] = len(recent)
+            rec["deposit_window_days"] = days
+        pcts = [float(m.group(1)) for r in rs
+                for m in [re.search(r"(\d+(?:\.\d+)?)\s*%\s*deposit", r["status"])] if m]
+        if pcts:
+            rec["deposit_pct"] = statistics.median(pcts)
         bal = [r for r in rs if "deposit" not in r["status"]]
         best = None
-        for anchor, field in (("etd", "etd"), ("eta", "etaf")):
-            xs = [d for d in (_days(r["req"], r[field]) for r in bal) if d is not None and -120 < d < 120]
-            if len(xs) >= MIN_TIMING_ROWS:
-                cand = (_mad(xs), anchor, int(statistics.median(xs)), len(xs))
-                if best is None or cand[0] < best[0]:
-                    best = cand
+        for window in (TIMING_WINDOW_DAYS, None):
+            rows_w = [r for r in bal if window is None or (r["req"] or "") >= since(window)]
+            for anchor, field in (("etd", "etd"), ("eta", "etaf")):
+                xs = [d for d in (_days(r["req"], r[field]) for r in rows_w)
+                      if d is not None and -120 < d < 120]
+                if len(xs) >= MIN_TIMING_ROWS:
+                    cand = (_mad(xs), anchor, int(statistics.median(xs)), len(xs), window)
+                    if best is None or cand[0] < best[0]:
+                        best = cand
+            if best:
+                break                   # recent window had enough: do not dilute with old habits
         if best:
-            rec.update({"anchor": best[1], "offset_days": best[2], "n": best[3], "mad": best[0]})
+            rec.update({"anchor": best[1], "offset_days": best[2], "n": best[3], "mad": best[0],
+                        "timing_window_days": best[4]})
         if len(rec) > 1:
             out[M._key(name)] = rec
 
     payload = {"built": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "source": ref.name,
-               "deposit_since": DEPOSIT_SINCE, "suppliers": out,
+               "rows_dated_from_cin7": from_cache,
+               "workbook_latest_entry": latest, "deposit_windows_days": DEPOSIT_WINDOWS,
+               "timing_window_days": TIMING_WINDOW_DAYS, "suppliers": out,
                "unmatched_names": sorted(unmatched)[:50]}
     OUT.write_text(json.dumps(payload, indent=1), encoding="utf-8")
     for k, v in out.items():

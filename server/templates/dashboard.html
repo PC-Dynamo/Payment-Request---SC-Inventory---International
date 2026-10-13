@@ -273,7 +273,7 @@ function suppliers(){
   return [...s].filter(Boolean).sort((a,b)=>a.localeCompare(b));
 }
 function buildFilters(){
-  seg("#fWin",[["request","This request"],["window",`${META.forecast_weeks}-week rolling`],["open","All unpaid"],["all","All incl. paid"]],"win");
+  seg("#fWin",[["request","Next pay run"],["window",`${META.forecast_weeks}-week rolling`],["open","All unpaid"],["all","All incl. paid"]],"win");
   seg("#fState",[["","All"],...META.states.map(s=>[s,s])],"state");
   seg("#fSeg",[["","All"],["Retail","Retail"],["Commercial","Commercial"]],"seg");
   seg("#fCur",[["","All"],...CURS.map(c=>[c,c])],"cur");
@@ -330,7 +330,7 @@ function renderKpis(){
   const pos=new Set(base.filter(r=>r.source==="auto"&&!["Paid","Not Payable"].includes(r.status)).map(r=>r.po));
   const K=[
     ["hl",`Request ${dd(META.next_request)} · USD`,"$"+fmt(sum(req,"USD")),`${req.filter(r=>r.currency==="USD").length} lines to request`],
-    ["hl",`Request ${dd(META.next_request)} · AUD`,"$"+fmt(sum(req,"AUD")),`${req.filter(r=>r.currency==="AUD").length} lines to request`],
+    ["hl",`Request ${dd(META.next_request_aud)} · AUD`,"$"+fmt(sum(req,"AUD")),`${req.filter(r=>r.currency==="AUD").length} lines to request`],
     ["",`${META.forecast_weeks}-week rolling · USD`,"$"+fmt(sum(win,"USD")),`to ${dd(META.horizon)}`],
     ["",`${META.forecast_weeks}-week rolling · AUD`,"$"+fmt(sum(win,"AUD")),`${win.filter(r=>r.currency==="AUD").length} AUD lines`],
     ["","Requested, awaiting payment",`$${k(sum(waiting,"USD"))} USD`,`$${k(sum(waiting,"AUD"))} AUD · ${waiting.length} lines`],
@@ -354,7 +354,7 @@ function renderTotals(rows){
     `<span class="sp"></span><span class="muted">${esc(F.status?`Status "${F.status}" — all lines searched`:winLabel())}</span>`;
   $("#fCount").textContent=n?`${n} filter${n>1?"s":""} active`:"";
 }
-const winLabel=()=>({request:`This request (${dd(META.next_request)})`,window:`${META.forecast_weeks}-week rolling to ${dd(META.horizon)}`,open:"All unpaid",all:"All lines incl. paid"})[F.win];
+const winLabel=()=>({request:`Next pay run (USD ${dd(META.next_request)} · AUD ${dd(META.next_request_aud)})`,window:`${META.forecast_weeks}-week rolling to ${dd(META.horizon)}`,open:"All unpaid",all:"All lines incl. paid"})[F.win];
 
 // ------------------------------------------------------------------ register
 // [key, header, relative width, kind, editable-field]
@@ -407,6 +407,7 @@ function cell(r,c){
     case "vendor_entity": return `${esc(r.vendor_entity)}${r.flags&&r.flags.length?` <span class="flag" title="${esc(r.flags.join("\n"))}">⚠</span>`:""}`;
     case "po": return cin7Link(r)+(r.bulk?'<span class="rv" title="Bulk order">BULK</span>':r.review?'<span class="rv" title="Check: deposit may be on the bulk order">CHECK</span>':"");
     case "etd": return esc(dd(r.etd))+(r.etd_estimated&&r.etd?'<span class="muted" title="estimated from ETA and transit time">*</span>':"");
+    case "request_date": return esc(dd(r.request_date))+(r.carried_from?`<span class="muted" title="Planned for ${esc(dd(r.carried_from))}, not paid yet - moved to the next pay run">↻</span>`:"");
     case "due_date": return `<span class="${r.overdue?"od":""}" title="${esc(r.due_overridden?"due date set by hand":(r.terms_rule||""))}">${esc(dd(r.due_date))||'<span class="muted">TBC</span>'}</span>`;
     case "status": return `<span class="pill st-${esc(String(r.status).replace(/\s+/g,""))}" title="${esc(r.assumed_paid||"")}">${esc(statusLabel(r))}</span>`;
     case "USD":case "AUD":case "GBP":case "EUR":
@@ -437,7 +438,7 @@ function renderTable(){
   $("#tbl thead").innerHTML="<tr>"+COLS.map(c=>`<th data-k="${c[0]}" class="${c[3]==="money"?"num":""}">${esc(c[1])}${sortKey===c[0]?(sortDir>0?" ▲":" ▼"):""}</th>`).join("")+"</tr>";
   const group=!!F.group&&!sortKey;
   const pname=x=>x.payee==="Supplier"?"Supplier (factory)":x.payee==="Forwarder"?"Forwarder / broker":"Other";
-  const gdate=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.status==="Awaiting Approval"?"Awaiting PO approval in Cin7 (New, not approved) — not requested yet":x.request_date?`Request ${dd(x.request_date)}${x.request_date===META.next_request?" (next)":""}`:"Date TBC — no ETA yet";
+  const gdate=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.status==="Awaiting Approval"?"Awaiting PO approval in Cin7 (New, not approved) — not requested yet":x.request_date?`Pay run ${dd(x.request_date)}${x.request_date===x.next_run?" (next)":""}`:"Date TBC — no ETA yet";
   const gname=x=>F.group==="payee"?pname(x):F.group==="date_payee"?`${gdate(x)} · ${pname(x)}`:gdate(x);
   if(group&&F.group!=="date"){const ord=x=>({Supplier:0,Forwarder:1,Other:2})[x.payee]??3;
     rows=[...rows].sort((a,b)=>F.group==="payee"?ord(a)-ord(b):((a.request_date||"9")+ord(a)).localeCompare((b.request_date||"9")+ord(b)));VIEW=rows}
@@ -512,7 +513,7 @@ function updSubmit(){const n=[...selected].filter(id=>DATA.some(r=>r.line_id===i
   $("#bSubmit").disabled=!n;$("#bSubmit").textContent=n?`Mark ${n} selected as Requested`:"Mark selected as Requested"}
 $("#bSubmit").onclick=async()=>{
   const ids=[...selected];if(!ids.length)return;
-  if(!confirm(`Mark ${ids.length} line(s) as Requested for ${dd(META.next_request)}?`))return;
+  if(!confirm(`Mark ${ids.length} line(s) as Requested for their next pay run (USD ${dd(META.next_request)} / AUD ${dd(META.next_request_aud)})?`))return;
   try{const j=await api("api/submit-request",{method:"POST",body:JSON.stringify({line_ids:ids})});selected.clear();toast(`${j.requested} lines marked Requested`);await load(false)}
   catch(err){toast("Not saved: "+err.message)}
 };
@@ -648,7 +649,7 @@ function renderNotes(){
     `<b>ETA to port</b>: Shipment Schedule cache built ${esc(m.shipment&&m.shipment.generated_awst)} (${esc(m.shipment&&m.shipment.status)}). Forwarder ETA is used; Cin7 ETA when there is none.`,
     `<b>Payment terms</b>: SC Master Data, snapshot ${esc(m.terms&&m.terms.snapshot_generated)}; re-read weekly (${esc(m.terms&&m.terms.status)}).`,
     `<b>Supplier &amp; Branch master</b>: ${esc(m.master&&m.master.status)}, file date ${esc(m.master&&m.master.file_date)}.`,
-    `<b>Scope</b>: ${s.open_pos} open international POs; ${s.bulk_excluded} China-stock bulk orders excluded (no vessel / ETA yet). Requests go out Tuesday and Friday; a line joins the last request day on or before its due date.`,
+    `<b>Scope</b>: ${s.open_pos} open international POs; ${s.bulk_excluded} China-stock bulk orders excluded (no vessel / ETA yet). Pay runs: <b>Tuesday</b> for supplier payments and USD freight, <b>Thursday</b> for AUD charges. A line joins the last pay run on or before its due date; a line still unpaid after its pay run moves to the next one (↻).`,
     `<b>USD</b>: Cin7 holds POs in landed AUD, so USD = qty × Cin7 costUSD, pinned per PO line when first seen. Values marked ~ are estimated — enter the invoice amount to override.`,
     `<b>When a payment is requested</b>: percentages come from master-data terms; whether a deposit is taken and how many days before ETD / forwarder ETA the balance is requested follow the team's own payment history (${esc(m.calibration&&m.calibration.source||"payment workbook")}). Each line's rule is shown in ✎.`,
     `<b>Awaiting Approval</b>: New POs not yet approved in Cin7 are drafts — listed, never requested. A deposit is requested ${"6"} days after approval.`,
@@ -708,7 +709,7 @@ async function load(first=true){
     const r=await fetch("api/data",{cache:"no-store"});const j=await r.json();
     if(!r.ok)throw new Error(j.error||r.status);
     DATA=j.rows;META=j.meta;SPECIAL=j.special_arrangements||{};
-    $("#sub").innerHTML=`Next payment request <b>${esc(dd(META.next_request))}</b> · refreshed ${esc(META.report_built_awst)} · ETA from Shipment Schedule ${esc(META.shipment&&META.shipment.generated_awst||"—")} · auto-refresh Tue &amp; Fri 07:00 AWST`;
+    $("#sub").innerHTML=`Next pay run <b>Tue ${esc(dd(META.next_request))}</b> (USD: suppliers &amp; freight) · <b>Thu ${esc(dd(META.next_request_aud))}</b> (AUD charges) · refreshed ${esc(META.report_built_awst)} · ETA from Shipment Schedule ${esc(META.shipment&&META.shipment.generated_awst||"—")} · auto-refresh Tue &amp; Fri 07:00 AWST`;
     if(first){buildFilters();let t="reg";try{t=localStorage.getItem("prtab")||"reg"}catch(e){}setTab(t)}else fillSelects();
     render();renderNotes();
   }catch(err){$("#sub").textContent="Could not load the report: "+err.message}

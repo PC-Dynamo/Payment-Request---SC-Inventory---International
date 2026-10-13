@@ -169,6 +169,11 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
         kinds.setdefault(ln["po"], set()).add(ln["kind"])
     states: dict[str, dict] = {}          # line_id -> values (later rows win)
     charges: list[dict] = []
+    # POs the workbook shows a deposit row for are paid in two parts, whatever
+    # the app currently assumes (UAT 13 Oct: Crossmax deposits paid 25 Aug).
+    dep_rows = {r["pos"][0] for r in rows
+                if len(r["pos"]) == 1 and "deposit" in (r["status"] or "").lower()
+                and not _charge_type(r["status"] or "")}
 
     for row in sorted(rows, key=lambda x: (x["req"] or x["entry"] or "", x["row"])):
         status = row["status"]
@@ -178,9 +183,11 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
         if ctype:
             if (row["entry"] or "") < since and (row["req"] or "") < since:
                 continue
-            if not row["pos"] or not any(p in kinds for p in row["pos"]):
-                if (row["req"] or "") < today.isoformat() and row["paid"]:
-                    continue       # paid charge for POs no longer open: history only
+            history_only = bool(
+                (not row["pos"] or not any(p in kinds for p in row["pos"]))
+                and (row["req"] or "") < today.isoformat() and row["paid"])
+            # ^ a paid charge for POs no longer open: never ADDED as a new line,
+            #   but it still closes a line the app already holds (sync).
             amt, cur = _money(row)
             if amt is None:
                 continue
@@ -196,6 +203,7 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
                 "status": st, "paid_date": row["paid"],
                 "comment": (row["comment"] or f"{status} (imported)")[:600],
                 "acc_scheduled_date": row["acc"], "paid_amount": row["paid_amt"],
+                "_history_only": history_only,
                 "finalised": None if row["paid"] else (0 if row["peach"] else 1),
             })
             continue
@@ -204,7 +212,9 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
         if len(row["pos"]) != 1 or row["pos"][0] not in kinds:
             continue
         po = row["pos"][0]
-        k = kinds[po]
+        k = set(kinds[po])
+        if po in dep_rows and "full" in k:
+            k = {"deposit", "balance"}
         final = "balance" if "balance" in k else "full"
         amt, cur = _money(row)
         if amt is None and row["paid_amt"]:
@@ -295,6 +305,21 @@ def _is_seed(who) -> bool:
     return not who or str(who).startswith("seed")
 
 
+def _human_fields(con, line_id: str) -> set:
+    """Fields a PERSON changed on this line, from the change log. '*' = the whole
+    line was created by a person. Only these are protected from a sync."""
+    out = set()
+    for action, detail in con.execute(
+            "SELECT action, detail FROM audit WHERE line_id = ? AND who NOT LIKE 'seed%'", (line_id,)):
+        if str(action).startswith("add"):
+            return {"*"}
+        try:
+            out |= set((json.loads(detail or "{}").get("after") or {}).keys())
+        except (TypeError, ValueError, AttributeError):
+            out.add("*")
+    return out
+
+
 def sync(states: dict, charges: list, label: str) -> dict:
     """Bring the app up to a newer copy of the team's workbook.
 
@@ -314,13 +339,14 @@ def sync(states: dict, charges: list, label: str) -> dict:
                 out["line_added"] += 1
                 continue
             diff = {f: x for f, x in vals.items() if x is not None and x != cur[f]}
-            if v.get("status", "-") is None and cur["status"] and _is_seed(cur["updated_by"]):
+            if v.get("status", "-") is None and cur["status"]:
                 diff["status"] = None        # back to automatic: queued, not yet requested
+            human = _human_fields(con, lid)
+            kept = sorted(diff) if "*" in human else sorted(f for f in diff if f in human)
+            diff = {} if "*" in human else {f: x for f, x in diff.items() if f not in human}
+            if kept:
+                out["conflicts"].append(f"{lid}: kept the app's {', '.join(kept)} (changed by a person)")
             if not diff:
-                continue
-            if not _is_seed(cur["updated_by"]):
-                out["conflicts"].append(f"{lid}: kept the app's {', '.join(sorted(diff))} "
-                                        f"(edited by {cur['updated_by']})")
                 continue
             sets = ", ".join(f"{f} = ?" for f in diff)
             con.execute(f"UPDATE line_state SET {sets}, updated_by = ?, updated_at = ? WHERE line_id = ?",
@@ -337,8 +363,10 @@ def sync(states: dict, charges: list, label: str) -> dict:
                 cur = con.execute(
                     "SELECT * FROM manual_line WHERE doc_no = ? AND pay_type = ? AND deleted = 0 "
                     "AND created_by LIKE 'seed%'", (c["doc_no"], c["pay_type"])).fetchone()
+            if not cur and c.get("_history_only"):
+                continue                  # old paid charge the app never held: history only
             if not cur:
-                data = {k: x for k, x in c.items() if k != "seed_key"}
+                data = {k: x for k, x in c.items() if k not in ("seed_key", "_history_only")}
                 vals = {f: L.clean(f, data.get(f)) for f in L.MANUAL_FIELDS}
                 vals["pay_type"] = vals["pay_type"] or "Other"
                 if vals["amount"] is None:
@@ -351,11 +379,13 @@ def sync(states: dict, charges: list, label: str) -> dict:
                 continue
             vals = {f: L.clean(f, c.get(f)) for f in SYNC_MANUAL_FIELDS if f in c}
             diff = {f: x for f, x in vals.items() if x not in (None, "") and x != cur[f]}
-            if not diff:
-                continue
-            if not _is_seed(cur["updated_by"]):
+            human = _human_fields(con, f"M{cur['id']}")
+            kept = sorted(diff) if "*" in human else sorted(f for f in diff if f in human)
+            diff = {} if "*" in human else {f: x for f, x in diff.items() if f not in human}
+            if kept:
                 out["conflicts"].append(f"M{cur['id']} {cur['pay_type']} {cur['doc_no'] or ''}: kept the "
-                                        f"app's {', '.join(sorted(diff))} (edited by {cur['updated_by']})")
+                                        f"app's {', '.join(kept)} (changed by a person)")
+            if not diff:
                 continue
             sets = ", ".join(f"{f} = ?" for f in diff)
             con.execute(f"UPDATE manual_line SET {sets}, updated_at = ? WHERE id = ?",
@@ -412,6 +442,8 @@ def main() -> int:
     n_charge = 0
     for c in charges:
         key = c.pop("seed_key")
+        if c.pop("_history_only", False):
+            continue
         if L.add_manual(c, "seed: payment request workbook", seed_key=key):
             n_charge += 1
     print(f"seeded {n_state} line states (others already recorded), "

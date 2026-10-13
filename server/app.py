@@ -178,13 +178,14 @@ def api_submit():
         r = by_id.get(str(lid))
         if not r or r["status"] != "For Payment":
             continue
-        ch = {"status": "Requested", "request_date": when["next_request"]}
+        ch = {"status": "Requested", "request_date": r.get("next_run") or when["next_request"]}
         if r["source"] == "manual":
             L.update_manual(r["manual_id"], ch, who)
         else:
             L.set_line_state(_ledger_id(r["line_id"]), ch, who)
         done += 1
-    return jsonify(ok=True, requested=done, request_date=when["next_request"])
+    return jsonify(ok=True, requested=done, request_date=when["next_request"],
+                   request_date_aud=when.get("next_request_aud"))
 
 
 @app.route("/api/audit")
@@ -234,7 +235,8 @@ def export_xlsx():
     rows = BR.filter_rows(rows, state if state in BR.STATES else "",
                           seg if seg in ("Retail", "Commercial") else "",
                           window if window in ("request", "window", "open", "all") else "window")
-    label = {"request": f"request {when['next_request']}", "window": "4-week rolling forecast",
+    label = {"request": f"pay run {when['next_request']} (USD) / {when.get('next_request_aud')} (AUD)",
+             "window": "4-week rolling forecast",
              "open": "all unpaid", "all": "all lines"}.get(window, "")
     sub = f"{label} · {state or 'all states'} · {seg or 'Retail + Commercial'}"
     return _send_xlsx(rows, p, when, sub)

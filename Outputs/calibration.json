@@ -1,167 +1,236 @@
 {
- "built": "2026-10-05 09:35",
- "source": "Payment Request for Four-week Rolling Forecast 05102026.xlsx",
- "deposit_since": "2026-04-01",
+ "built": "2026-10-13 23:28",
+ "source": "Payment Request for Four-week Rolling Forecast (62).xlsx",
+ "rows_dated_from_cin7": 376,
+ "workbook_latest_entry": "2026-10-11",
+ "deposit_windows_days": [
+  100,
+  200
+ ],
+ "timing_window_days": 120,
  "suppliers": {
   "bodylonger fitness equipment co.,ltd": {
    "supplier": "BODYLONGER FITNESS EQUIPMENT CO.,LTD",
    "deposit_rate": 0.0,
-   "deposit_pos": 15,
+   "deposit_pos": 7,
+   "deposit_window_days": 100,
    "anchor": "eta",
-   "offset_days": -9,
-   "n": 42,
-   "mad": 2.0
+   "offset_days": -10,
+   "n": 10,
+   "mad": 1.5,
+   "timing_window_days": 120
   },
   "dkcity / tung keng enterprise co., ltd": {
    "supplier": "DKCITY / Tung Keng Enterprise Co., Ltd",
+   "deposit_pct": 40.0,
    "anchor": "etd",
    "offset_days": -12,
    "n": 6,
-   "mad": 7.0
+   "mad": 7.0,
+   "timing_window_days": null
   },
   "fdf limited": {
    "supplier": "FDF Limited",
    "deposit_rate": 0.0,
-   "deposit_pos": 6,
-   "anchor": "eta",
-   "offset_days": -2,
-   "n": 16,
-   "mad": 8.5
+   "deposit_pos": 11,
+   "deposit_window_days": 200,
+   "anchor": "etd",
+   "offset_days": 61,
+   "n": 8,
+   "mad": 1.5,
+   "timing_window_days": 120
   },
   "imbell fitness": {
    "supplier": "Imbell fitness",
    "deposit_rate": 0.0,
-   "deposit_pos": 22,
+   "deposit_pos": 13,
+   "deposit_window_days": 100,
    "anchor": "eta",
    "offset_days": -10,
-   "n": 61,
-   "mad": 3
+   "n": 19,
+   "mad": 3,
+   "timing_window_days": 120
   },
   "impulse": {
    "supplier": "Impulse",
-   "deposit_rate": 0.08,
-   "deposit_pos": 24,
+   "deposit_rate": 0.0,
+   "deposit_pos": 8,
+   "deposit_window_days": 100,
+   "deposit_pct": 30.0,
    "anchor": "etd",
-   "offset_days": -7,
-   "n": 39,
-   "mad": 9
+   "offset_days": -13,
+   "n": 20,
+   "mad": 4.5,
+   "timing_window_days": 120
+  },
+  "insight fitness": {
+   "supplier": "Insight Fitness",
+   "deposit_pct": 30.0
+  },
+  "intenza": {
+   "supplier": "Intenza",
+   "deposit_pct": 40.0
   },
   "iron master": {
    "supplier": "Iron Master",
    "deposit_rate": 0.0,
-   "deposit_pos": 25,
+   "deposit_pos": 10,
+   "deposit_window_days": 100,
    "anchor": "eta",
    "offset_days": -10,
-   "n": 82,
-   "mad": 2.5
+   "n": 21,
+   "mad": 3,
+   "timing_window_days": 120
   },
   "kpower": {
    "supplier": "Kpower",
-   "deposit_rate": 0.33,
-   "deposit_pos": 36,
+   "deposit_rate": 0.4,
+   "deposit_pos": 20,
+   "deposit_window_days": 100,
+   "deposit_pct": 20.0,
    "anchor": "eta",
-   "offset_days": -9,
-   "n": 51,
-   "mad": 3
+   "offset_days": -10,
+   "n": 18,
+   "mad": 3.0,
+   "timing_window_days": 120
   },
   "nantong ruiming supply chain co.,ltd.": {
    "supplier": "NANTONG RUIMING SUPPLY CHAIN CO.,LTD.",
    "deposit_rate": 0.0,
-   "deposit_pos": 26,
+   "deposit_pos": 24,
+   "deposit_window_days": 100,
    "anchor": "eta",
    "offset_days": -11,
-   "n": 15,
-   "mad": 1
+   "n": 18,
+   "mad": 1.0,
+   "timing_window_days": 120
   },
   "qingdao csp industry and trade co.,ltd": {
    "supplier": "Qingdao CSP Industry and Trade Co.,ltd",
-   "deposit_rate": 0.5,
-   "deposit_pos": 38,
+   "deposit_rate": 0.0,
+   "deposit_pos": 18,
+   "deposit_window_days": 100,
+   "deposit_pct": 30.0,
    "anchor": "eta",
-   "offset_days": -11,
-   "n": 87,
-   "mad": 5
+   "offset_days": -9,
+   "n": 32,
+   "mad": 3.5,
+   "timing_window_days": 120
   },
   "qingdao great century plastic co.,ltd": {
    "supplier": "Qingdao Great Century Plastic Co.,Ltd",
    "deposit_rate": 0.0,
-   "deposit_pos": 15,
+   "deposit_pos": 10,
+   "deposit_window_days": 100,
+   "deposit_pct": 50.0,
    "anchor": "etd",
-   "offset_days": -38,
-   "n": 43,
-   "mad": 14
+   "offset_days": -28,
+   "n": 12,
+   "mad": 3.5,
+   "timing_window_days": 120
   },
   "rizhao pioneer barbell & fitness inc.": {
    "supplier": "RIZHAO PIONEER BARBELL & FITNESS INC.",
    "deposit_rate": 0.5,
    "deposit_pos": 4,
-   "anchor": "eta",
-   "offset_days": -63,
-   "n": 11,
-   "mad": 19
+   "deposit_window_days": 200,
+   "deposit_pct": 30.0,
+   "anchor": "etd",
+   "offset_days": -11,
+   "n": 12,
+   "mad": 22.5,
+   "timing_window_days": null
   },
   "rizhao land sea fitness goods ltd (ckb)": {
    "supplier": "Rizhao Land Sea Fitness Goods Ltd (CKB)",
-   "deposit_rate": 0.84,
-   "deposit_pos": 19,
+   "deposit_rate": 1.0,
+   "deposit_pos": 9,
+   "deposit_window_days": 100,
+   "deposit_pct": 20.0,
    "anchor": "eta",
    "offset_days": -10,
-   "n": 46,
-   "mad": 3.0
+   "n": 12,
+   "mad": 4.5,
+   "timing_window_days": 120
   },
   "shandong crossmax fitness co.,ltd": {
    "supplier": "SHANDONG CROSSMAX FITNESS CO.,LTD",
    "deposit_rate": 1.0,
    "deposit_pos": 5,
+   "deposit_window_days": 100,
+   "deposit_pct": 30.0,
    "anchor": "etd",
-   "offset_days": -3,
+   "offset_days": -5,
    "n": 5,
-   "mad": 0
+   "mad": 0,
+   "timing_window_days": 120
   },
   "shandong vog sports products co ltd": {
    "supplier": "Shandong VOG Sports Products Co Ltd",
    "deposit_rate": 0.9,
    "deposit_pos": 10,
+   "deposit_window_days": 100,
+   "deposit_pct": 20.0,
    "anchor": "eta",
    "offset_days": -10,
-   "n": 15,
-   "mad": 5
+   "n": 5,
+   "mad": 0,
+   "timing_window_days": 120
   },
   "watson gym equipment": {
    "supplier": "Watson Gym Equipment",
    "deposit_rate": 1.0,
    "deposit_pos": 5,
-   "anchor": "etd",
-   "offset_days": -2,
+   "deposit_window_days": 200,
+   "deposit_pct": 25.0,
+   "anchor": "eta",
+   "offset_days": -72,
    "n": 6,
-   "mad": 8.0
+   "mad": 1.0,
+   "timing_window_days": null
   },
   "xiamen k-life sport co., ltd": {
    "supplier": "Xiamen K-Life Sport Co., Ltd",
    "deposit_rate": 1.0,
    "deposit_pos": 5,
+   "deposit_window_days": 200,
+   "deposit_pct": 30.0,
    "anchor": "eta",
    "offset_days": -8,
    "n": 13,
-   "mad": 5
+   "mad": 5,
+   "timing_window_days": null
   },
   "zhejiang elina fitness technology co ltd": {
    "supplier": "Zhejiang Elina Fitness Technology Co Ltd",
    "deposit_rate": 1.0,
    "deposit_pos": 11,
+   "deposit_window_days": 100,
+   "deposit_pct": 30.0,
    "anchor": "eta",
-   "offset_days": -52,
-   "n": 6,
-   "mad": 2.5
+   "offset_days": -49,
+   "n": 5,
+   "mad": 5,
+   "timing_window_days": 120
   },
   "zhejiang merach tech": {
    "supplier": "Zhejiang Merach Tech",
    "deposit_rate": 1.0,
-   "deposit_pos": 8,
+   "deposit_pos": 7,
+   "deposit_window_days": 100,
+   "deposit_pct": 30.0,
    "anchor": "eta",
-   "offset_days": -12,
-   "n": 7,
-   "mad": 3
+   "offset_days": -13,
+   "n": 5,
+   "mad": 2,
+   "timing_window_days": 120
+  },
+  "beast well": {
+   "supplier": "beast well",
+   "deposit_rate": 1.0,
+   "deposit_pos": 5,
+   "deposit_window_days": 100,
+   "deposit_pct": 30.0
   }
  },
  "unmatched_names": [

@@ -15,8 +15,8 @@ Live: <https://sc.dynamofitness.au/Applications/payment-request/>
   SKU level), split into its payment milestones from the supplier's payment
   terms: *Deposit x%* on the PO date, then *Balance* relative to ETD or ETA to
   port, or one *Full payment*.
-- **Requests go out Tuesday and Friday.** A line joins the last request day on
-  or before its due date; an overdue line joins the next one and is flagged.
+- **Pay runs: Tuesday for supplier payments and USD freight, Thursday for AUD charges** (as the team runs them). A line joins the last pay run on
+  or before its due date; a line still unpaid after its pay run moves to the next one (↻).
 - **AUD lines and freight are added by hand** (“+ Add AUD / freight line”).
   Name the PO(s) and the line inherits branch, state and channel.
 - People set status (For Payment → Requested → Paid, On Hold, Not Payable),

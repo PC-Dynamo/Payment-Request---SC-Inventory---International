@@ -33,16 +33,19 @@ def D(s):
 
 
 def test_request_days():
-    # 2026-09-25 is a Friday, 09-29 Tuesday, 09-30 Wednesday
-    check(P.next_request_day(D("2026-09-25")) == D("2026-09-25"), "Friday is a request day")
-    check(P.next_request_day(D("2026-09-26")) == D("2026-09-29"), "Saturday -> next Tuesday")
-    check(P.next_request_day(D("2026-09-30")) == D("2026-10-02"), "Wednesday -> Friday")
-    check(P.request_day_for(D("2026-10-08"), D("2026-09-25")) == D("2026-10-06"),
-          "due Thu 8 Oct -> requested Tue 6 Oct")
-    check(P.request_day_for(D("2026-10-09"), D("2026-09-25")) == D("2026-10-09"),
-          "due on a Friday -> that Friday")
-    check(P.request_day_for(D("2026-01-01"), D("2026-09-25")) == D("2026-09-25"),
-          "overdue -> next request day, never dropped")
+    # USD runs Tuesday, AUD runs Thursday. 2026-09-25 Fri, 09-29 Tue, 10-01 Thu.
+    tue, thu = (1,), (3,)
+    check(P.next_request_day(D("2026-09-29"), tue) == D("2026-09-29"), "Tuesday is a USD pay run")
+    check(P.next_request_day(D("2026-09-25"), tue) == D("2026-09-29"), "Friday -> next Tuesday")
+    check(P.next_request_day(D("2026-09-29"), thu) == D("2026-10-01"), "AUD charges -> Thursday")
+    check(P.request_day_for(D("2026-10-08"), D("2026-09-25"), tue) == D("2026-10-06"),
+          "due Thu 8 Oct -> Tuesday 6 Oct run")
+    check(P.request_day_for(D("2026-10-13"), D("2026-09-25"), tue) == D("2026-10-13"),
+          "due on a Tuesday -> that Tuesday")
+    check(P.request_day_for(D("2026-01-01"), D("2026-09-25"), tue) == D("2026-09-29"),
+          "overdue -> next pay run, never dropped")
+    check(P.weekdays_for("AUD") == (3,) and P.weekdays_for("USD") == (1,) and P.weekdays_for("GBP") == (1,),
+          "pay-run day follows the currency")
 
 
 def test_po_list():
@@ -98,7 +101,7 @@ def test_merge():
     by = {r["line_id"]: r for r in rows}
     check(by["PO-10001|deposit"]["status"] == "For Payment" and by["PO-10001|deposit"]["overdue"],
           "overdue deposit is For Payment and flagged")
-    check(by["PO-10001|deposit"]["request_date"] == "2026-09-25", "overdue line joins the next request")
+    check(by["PO-10001|deposit"]["request_date"] == "2026-09-29", "overdue line joins the next Tuesday run")
     check(by["PO-10001|balance"]["status"] == "Forecast" and by["PO-10001|balance"]["amount"] == 71.5,
           "future balance is Forecast and keeps the amount override")
     check(not by["PO-10001|balance"]["in_window"], "20 Nov is outside the 4-week window")
@@ -193,8 +196,34 @@ def test_uat_rules():
           "a record on the old balance line carries over to the single full payment")
 
 
+def test_uat_13oct():
+    """Rules added after the 13 Oct 2026 UAT (Idelyn)."""
+    base = {"source": "auto", "po": "PO-60001", "po_list": ["PO-60001"], "vendor": "X", "state": "WA",
+            "segment": "Retail", "currency": "USD", "flags": [], "assumed_paid": None, "kind": "full",
+            "line_id": "PO-60001|full", "amount_auto": 10.0, "due_auto": "2026-10-08"}
+    rows, when = P.merge([base], {"PO-60001|full": {"request_date": "2026-10-06", "amount": 9.0}},
+                         [], D("2026-10-14"), 4)
+    r = rows[0]
+    check(r["request_date"] == "2026-10-20" and r["carried_from"] == "2026-10-06" and r["status"] == "For Payment",
+          "unpaid line planned for a past pay run moves to the next one")
+    check(when["next_request"] == "2026-10-20" and when["next_request_aud"] == "2026-10-15",
+          "next runs: Tuesday USD, Thursday AUD")
+    rows, _ = P.merge([base], {"PO-60001|full": {"status": "Requested", "request_date": "2026-10-06"}},
+                      [], D("2026-10-14"), 4)
+    check(rows[0]["request_date"] == "2026-10-06", "a line already sent to Accounts keeps its date")
+    man = [{"id": 7, "po_refs": "", "pay_type": "GST Payment", "currency": "AUD", "amount": 5.0,
+            "due_date": None, "status": None}]
+    rows, _ = P.merge([], {}, man, D("2026-10-14"), 4)
+    check(rows[0]["request_date"] == "2026-10-15", "AUD charge with no due date -> Thursday run")
+    check(not P._evidence({"finalised": 1}) and P._evidence({"status": "Paid"}),
+          "a ticked Final box alone is not evidence of a deposit")
+    rule = T.parse_terms(None)
+    r2 = P._calibrated(rule, {"deposit_rate": 1.0, "deposit_pos": 5, "deposit_pct": 30})
+    check(r2["deposit_pct"] == 30, "a deposit the supplier always takes is added from history")
+
+
 def main() -> int:
-    for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_data):
+    for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

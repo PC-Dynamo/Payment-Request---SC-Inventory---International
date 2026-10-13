@@ -80,6 +80,8 @@ def build_payload() -> dict:
             "calibration": {k: calibration.get(k) for k in ("built", "source", "deposit_since")},
             "run_log": meta.get("run_log") or [],
             "forecast_weeks": int(ov.get("forecast_weeks") or 4),
+            "pay_weekdays": {k.upper(): [int(x) for x in v]
+                             for k, v in (ov.get("pay_weekdays") or {}).items()} or None,
             "cin7_url_template": ov.get("cin7_url_template") or "",
             "states": STATES,
             "statuses": L.STATUSES,
@@ -114,7 +116,7 @@ def merged(payload: dict, today: dt.date | None = None) -> tuple[list[dict], dic
     return P.merge(payload["auto_lines"], L.all_line_states(), L.all_manual(), today,
                    payload["meta"].get("forecast_weeks", 4),
                    payload.get("po_index") or {}, payload.get("branch_state") or {},
-                   payload.get("branch_name") or {})
+                   payload.get("branch_name") or {}, payload["meta"].get("pay_weekdays"))
 
 
 def filter_rows(rows: list[dict], state: str = "", segment: str = "",

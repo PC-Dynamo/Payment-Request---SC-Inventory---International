@@ -24,7 +24,12 @@ import re
 import masters as M
 import terms as T
 
-REQUEST_WEEKDAYS = (1, 4)                 # Tuesday, Friday
+# Pay runs, as the team actually runs them (payment workbook, Jul-Oct 2026):
+# supplier payments and USD freight go in the TUESDAY run (339 of 342 rows),
+# AUD document / handling charges in the THURSDAY run (230 of 238 rows).
+# The app's data refresh (Tue + Fri 07:00 AWST) is a separate schedule.
+PAY_WEEKDAYS = {"USD": (1,), "GBP": (1,), "EUR": (1,), "AUD": (3,)}
+DEFAULT_PAY_WEEKDAYS = (1,)
 # Bulk orders sitting in China are the General Planning app's flow: no vessel,
 # no ETA, and the shipment POs later allocated from them are not paid twice.
 BULK_STAGES = {"Production-China Stock", "In Stock China Warehouse"}
@@ -53,21 +58,26 @@ def _s(d: dt.date | None) -> str | None:
     return d.isoformat() if d else None
 
 
-def next_request_day(day: dt.date) -> dt.date:
-    """Today if today is a request day, else the next Tuesday/Friday."""
+def weekdays_for(currency: str | None, pay_weekdays: dict | None = None) -> tuple:
+    table = pay_weekdays or PAY_WEEKDAYS
+    return tuple(table.get((currency or "USD").upper(), table.get("USD", DEFAULT_PAY_WEEKDAYS)))
+
+
+def next_request_day(day: dt.date, weekdays: tuple = DEFAULT_PAY_WEEKDAYS) -> dt.date:
+    """Today if today is a pay-run day, else the next one."""
     for i in range(7):
         c = day + dt.timedelta(days=i)
-        if c.weekday() in REQUEST_WEEKDAYS:
+        if c.weekday() in weekdays:
             return c
     return day
 
 
-def request_day_for(due: dt.date, today: dt.date) -> dt.date:
-    """The last request day on/before `due`, but never before the next one."""
-    nxt = next_request_day(today)
+def request_day_for(due: dt.date, today: dt.date, weekdays: tuple = DEFAULT_PAY_WEEKDAYS) -> dt.date:
+    """The last pay-run day on/before `due`, but never before the next one."""
+    nxt = next_request_day(today, weekdays)
     for i in range(7):
         c = due - dt.timedelta(days=i)
-        if c.weekday() in REQUEST_WEEKDAYS:
+        if c.weekday() in weekdays:
             return max(c, nxt)
     return nxt
 
@@ -111,6 +121,9 @@ def _calibrated(rule: dict, cal: dict | None) -> dict:
     if rate is not None and rate < DEPOSIT_RATE_MIN and rule["deposit_pct"]:
         notes.append(f"no deposit by default - only {rate:.0%} of {cal.get('deposit_pos')} recent POs had one")
         rule["deposit_pct"] = 0.0
+    elif rate is not None and rate >= DEPOSIT_RATE_MIN and not rule["deposit_pct"] and cal.get("deposit_pct"):
+        rule["deposit_pct"] = float(cal["deposit_pct"])
+        notes.append(f"{cal['deposit_pct']:g}% deposit - taken on {rate:.0%} of {cal.get('deposit_pos')} recent POs")
     if cal.get("anchor") and cal.get("n", 0) >= 5:
         off = int(cal["offset_days"])
         where = "ETD" if cal["anchor"] == "etd" else "forwarder ETA"
@@ -125,6 +138,13 @@ def _calibrated(rule: dict, cal: dict | None) -> dict:
     return rule
 
 
+def _evidence(st: dict) -> bool:
+    """A record that proves this payment line exists as recorded."""
+    return bool(st.get("status") in ("Paid", "Requested") or st.get("paid_date")
+                or st.get("paid_amount") is not None or st.get("amount") is not None
+                or st.get("invoice_no") or st.get("request_date"))
+
+
 def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
                calibration: dict | None = None, states: dict | None = None) -> tuple[list[dict], dict]:
     book = T.TermsBook(terms_rows, overrides.get("term_aliases"))
@@ -132,7 +152,9 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
     # Per PO, what people already recorded decides the split: a recorded
     # deposit/balance keeps two lines, a recorded full payment keeps one.
     recorded: dict[str, set] = {}
-    for lid in (states or {}):
+    for lid, st in (states or {}).items():
+        if not _evidence(st):
+            continue          # e.g. only the "Final" box ticked: says nothing about the split
         po_ref, _, kind = lid.partition("|")
         recorded.setdefault(po_ref, set()).add(kind)
     special = {M._key(k): v for k, v in (overrides.get("special_arrangements") or {}).items()}
@@ -246,13 +268,19 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
         usd = float(po.get("value_usd") or 0)
         dep = float(rule["deposit_pct"] or 0)
         rec = recorded.get(ref, set())
-        if "deposit" in rec and not dep:
-            # People recorded a deposit on this PO: keep the split, at the
-            # master-data percentage (or 30% if master-data has none). A balance
-            # alone proves nothing - the 25 Sep seed filed plain "For Payment"
-            # rows under "balance" while the PO still had two lines.
-            dep = float(T.parse_terms(trow, sp)["deposit_pct"] or 30)
+        if "deposit" in rec:
+            # A deposit was recorded on this PO: it keeps two lines whatever the
+            # supplier's default, and a stale "full" record from an earlier sync
+            # does not undo that. A balance alone proves nothing - the 25 Sep
+            # seed filed plain "For Payment" rows under "balance".
+            if not dep:
+                dep = float(T.parse_terms(trow, sp)["deposit_pct"]
+                            or (cal_by.get(M._key(po["supplier"])) or {}).get("deposit_pct") or 30)
+                base["terms_rule"] = (f"{dep:g}% deposit recorded for this PO; {100 - dep:g}% balance"
+                                      + (" - " + rule["rule"].split(" - ", 1)[1] if " - " in rule["rule"] else ""))
         elif "full" in rec:
+            if dep:
+                base["terms_rule"] = "100% - recorded as one payment for this PO"
             dep = 0.0
         mile = []
         if bulk:
@@ -308,12 +336,16 @@ def _po_context(auto: list[dict]) -> dict[str, dict]:
 def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
           today: dt.date, forecast_weeks: int = 4, po_index: dict | None = None,
           branch_state: dict | None = None,
-          branch_name: dict | None = None) -> tuple[list[dict], dict]:
-    nxt = next_request_day(today)
+          branch_name: dict | None = None,
+          pay_weekdays: dict | None = None) -> tuple[list[dict], dict]:
+    nxt = next_request_day(today, weekdays_for("USD", pay_weekdays))
+    nxt_aud = next_request_day(today, weekdays_for("AUD", pay_weekdays))
     horizon = nxt + dt.timedelta(weeks=forecast_weeks)
     out: list[dict] = []
 
     def finish(row: dict, due: dt.date | None, st: dict) -> dict:
+        wd = weekdays_for(row.get("currency"), pay_weekdays)
+        nxt_l = next_request_day(today, wd)       # this line's next pay run
         req = _d(st.get("request_date"))
         status = st.get("status")
         if not status and row.get("awaiting_approval"):
@@ -323,13 +355,18 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
                 status = "Paid"
                 row["status_assumed"] = True
             elif req is not None:
-                status = "For Payment" if req <= nxt else "Forecast"
+                status = "For Payment" if req <= nxt_l else "Forecast"
             elif due is None:
                 status = "Date TBC"
             else:
-                status = "For Payment" if request_day_for(due, today) <= nxt else "Forecast"
+                status = "For Payment" if request_day_for(due, today, wd) <= nxt_l else "Forecast"
         if req is None and status not in ("Paid", "Not Payable", "Date TBC", "Awaiting Approval"):
-            req = request_day_for(due, today) if due else nxt
+            req = request_day_for(due, today, wd) if due else nxt_l
+        carried = None
+        if status == "For Payment" and req is not None and req < nxt_l:
+            # Planned for a pay run that has passed and still not paid: it goes
+            # in the next run (UAT: three POs still showed 6 Oct on 9 Oct).
+            carried, req = req, nxt_l
         stored_final = st.get("finalised")
         if stored_final is None:
             # Default: confirmed once someone has entered the PI amount or invoice.
@@ -352,10 +389,12 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
             "updated_by": st.get("updated_by"),
             "updated_at": st.get("updated_at"),
             "overdue": bool(due and due < today and status in ("For Payment", "Requested", "On Hold")),
-            "in_request": bool(status == "For Payment" and req and req <= nxt),
-            # The whole batch for the next request day: still to send + already sent.
-            "this_request": bool((status == "For Payment" and req and req <= nxt)
-                                 or (status == "Requested" and req == nxt)),
+            "next_run": _s(nxt_l),
+            "carried_from": _s(carried),
+            "in_request": bool(status == "For Payment" and req and req <= nxt_l),
+            # The whole batch for this line's next pay run: still to send + already sent.
+            "this_request": bool((status == "For Payment" and req and req <= nxt_l)
+                                 or (status == "Requested" and req == nxt_l)),
             "in_window": bool(status in ("For Payment", "Requested", "On Hold", "Forecast")
                               and req and req <= horizon),
         })
@@ -451,13 +490,14 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
               "updated_at": m.get("updated_at") or m.get("created_at")}
         due = _d(m.get("due_date"))
         if due is None and not st["status"]:
-            st["status"] = "For Payment"          # no due date given: pay in this request
-            st["request_date"] = st["request_date"] or _s(nxt)
+            st["status"] = "For Payment"          # no due date given: pay in the next run
+            st["request_date"] = st["request_date"] or _s(
+                next_request_day(today, weekdays_for(row["currency"], pay_weekdays)))
         out.append(finish(row, due, st))
 
     for r in out:
         r["container_size"], r["container_number"] = container_parts(r.get("container") or "")
     out.sort(key=lambda r: (r.get("request_date") or "9999", r.get("due_date") or "9999",
                             r.get("vendor") or "", r.get("po") or ""))
-    return out, {"today": _s(today), "next_request": _s(nxt), "horizon": _s(horizon),
-                 "forecast_weeks": forecast_weeks}
+    return out, {"today": _s(today), "next_request": _s(nxt), "next_request_aud": _s(nxt_aud),
+                 "horizon": _s(horizon), "forecast_weeks": forecast_weeks}
