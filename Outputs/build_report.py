@@ -49,14 +49,49 @@ def _branch_maps() -> tuple[dict[str, str], dict[str, str]]:
         return {}, {}
 
 
+def effective_state(ln: dict, states: dict) -> dict:
+    """The ledger record behind an auto line (a 'full' line may still use the
+    record made on its old 'balance' line - see payments.merge)."""
+    st = states.get(ln["line_id"]) or {}
+    if not st and ln.get("kind") == "full" and f"{ln['po']}|deposit" not in states:
+        st = states.get(f"{ln['po']}|balance") or {}
+    return st
+
+
+def is_payment_record(st: dict) -> bool:
+    """A real payment record (sent, paid or written off) - worth keeping forever."""
+    return bool(st and (st.get("status") in ("Paid", "Requested", "Not Payable")
+                        or st.get("paid_date") or st.get("paid_amount") is not None))
+
+
+def closed_archive(snaps: list[dict], auto: list[dict], cache: dict) -> list[dict]:
+    """Archived lines whose PO is no longer open in Cin7 (open POs show live)."""
+    live = {ln["po"] for ln in auto}
+    out = []
+    for snap in snaps:
+        if snap.get("po") in live:
+            continue
+        c = (cache.get("pos") or {}).get(snap.get("po")) or {}
+        snap = dict(snap)
+        snap.update({"archived": True, "assumed_paid": None, "awaiting_approval": False,
+                     "stage": c.get("stage") or "Closed in Cin7"})
+        snap["flags"] = [x for x in snap.get("flags") or [] if "closed in Cin7" not in x] + [
+            "PO closed in Cin7 - kept from the payment record"]
+        out.append(snap)
+    return out
+
+
 def build_payload() -> dict:
     cache = json.loads(CACHE.read_text(encoding="utf-8"))
     ov = load_overrides()
     terms = S.load_payment_terms()
     cal_path = HERE / "calibration.json"
     calibration = json.loads(cal_path.read_text(encoding="utf-8")) if cal_path.exists() else {}
-    auto, stats = P.auto_lines(cache, terms.get("payment_terms") or [], ov,
-                               calibration, L.all_line_states())
+    states = L.all_line_states()
+    auto, stats = P.auto_lines(cache, terms.get("payment_terms") or [], ov, calibration, states)
+    L.archive_lines([ln for ln in auto if is_payment_record(effective_state(ln, states))])
+    archived = closed_archive(L.archived_snapshots(), auto, cache)
+    stats["archived"] = len(archived)
     meta = cache.get("meta", {})
     branch_state, branch_name = _branch_maps()
     now = dt.datetime.now(AWST)
@@ -89,6 +124,8 @@ def build_payload() -> dict:
             "charge_types": L.CHARGE_TYPES,
         },
         "auto_lines": auto,
+        # Paid / requested lines of POs Cin7 no longer lists as open.
+        "archived_lines": archived,
         # Every cached PO, open or recently received, so a manual charge line
         # that names a PO inherits its branch, state and channel.
         "po_index": {ref: {"branch": r.get("branch"), "state": r.get("state"),
@@ -113,7 +150,8 @@ def build_payload() -> dict:
 
 def merged(payload: dict, today: dt.date | None = None) -> tuple[list[dict], dict]:
     today = today or dt.datetime.now(AWST).date()
-    return P.merge(payload["auto_lines"], L.all_line_states(), L.all_manual(), today,
+    lines = list(payload["auto_lines"]) + list(payload.get("archived_lines") or [])
+    return P.merge(lines, L.all_line_states(), L.all_manual(), today,
                    payload["meta"].get("forecast_weeks", 4),
                    payload.get("po_index") or {}, payload.get("branch_state") or {},
                    payload.get("branch_name") or {}, payload["meta"].get("pay_weekdays"))
@@ -173,15 +211,169 @@ COLUMNS = [       # the team's payment request register, in its column order
 ]
 
 
+NAVY = "1B2A4A"
+PEACH = "FCE4D6"
+
+# The team's own register ("updated" sheet of the payment request workbook):
+# same sheet name, same header text (quirks included), same column order, so a
+# report built on that workbook can be pointed at the app's backup instead.
+TEAM_COLUMNS = [
+    ("Entry Date", "entry_date", "date"), ("Vendor Entity Name", "vendor_entity", None),
+    ("Supplier Name", "supplier", None), ("PO Number", "po", None),
+    ("Document / Invoice No.", "invoice_no", None), ("Branch", "branch", None),
+    ("Stage", "stage", None), ("ETD", "etd", "date"), ("ETA\n(Forwarder)", "eta_port", "date"),
+    ("ETA (CIN7)", "eta_cin7", "date"), ("Container Size", "container_size", None),
+    ("Payment Status/Type", "_status_type", None), ("Payment Request Date", "request_date", "date"),
+    ("Due Date ", "due_date", "date"), ("Accounts Scheduled Payment Date", "acc_scheduled_date", "date"),
+    ("Value (USD)", "_usd", "money"), ("Value (AUD)", "_aud", "money"), ("Value (GBP)", "_gbp", "money"),
+    (" Value (EUR) ", "_eur", "money"), ("Paid Date", "paid_date", "date"),
+    ("Paid Amount", "paid_amount", "money"), ("Comment", "comment", None),
+    ("Container Number", "container_number", None), ("%", "_pct", "pct"),
+]
+
+
+def status_type(row: dict) -> str:
+    """The team's 'Payment Status/Type' wording for a line."""
+    st = row.get("status")
+    if st == "Not Payable":
+        return "Not payable"
+    if row.get("source") == "manual":
+        return row.get("pay_type") or "Other"
+    paid = st == "Paid"
+    kind = row.get("kind")
+    pct = row.get("pct")
+    if kind == "deposit":
+        txt = f"{pct:g}% deposit {'paid' if paid else 'for payment'}" if pct else (
+            "Deposit paid" if paid else "Deposit for payment")
+    elif kind == "balance":
+        txt = "Balance paid" if paid else "Balance for payment"
+    else:
+        txt = "Paid" if paid else "For Payment"
+    if row.get("status_assumed"):
+        txt += " (assumed)"
+    return txt
+
+
+def _cell_values(row: dict) -> dict:
+    cur = row.get("currency") or "USD"
+    amt = float(row.get("amount") or 0)
+    vals = {f"_{c.lower()}": (amt if cur == c else None) for c in ("USD", "AUD", "GBP", "EUR")}
+    vals["_flags"] = "; ".join(row.get("flags") or [])
+    vals["_final"] = "" if row.get("status") in ("Paid", "Not Payable") else (
+        "Yes" if row.get("finalised") else "No")
+    vals["_status_type"] = status_type(row)
+    vals["_pct"] = (row["pct"] / 100.0) if row.get("pct") is not None else None
+    return vals
+
+
+def _write_cell(ws, r, i, v, kind, border=None):
+    if kind == "date" and v:
+        v = dt.date.fromisoformat(str(v)[:10])
+    c = ws.cell(row=r, column=i, value=v)
+    if border is not None:
+        c.border = border
+    if kind == "date":
+        c.number_format = "DD/MM/YYYY"
+    elif kind == "money":
+        c.number_format = "#,##0.00"
+    elif kind == "pct":
+        c.number_format = "0%"
+    return c
+
+
+def _sheet_team_register(ws, rows: list[dict]) -> None:
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    for i, (label, _, _) in enumerate(TEAM_COLUMNS, 1):
+        c = ws.cell(row=1, column=i, value=label)
+        c.font = Font(bold=True)
+    widths = (11, 30, 26, 14, 18, 22, 16, 11, 11, 11, 10, 22, 12, 11, 13, 13, 13, 12, 12, 11, 13, 34, 16, 6)
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    for r, row in enumerate(rows, 2):
+        vals = _cell_values(row)
+        for i, (_, key, kind) in enumerate(TEAM_COLUMNS, 1):
+            _write_cell(ws, r, i, vals.get(key) if key.startswith("_") else row.get(key), kind)
+        if row.get("not_final"):
+            for i in range(1, len(TEAM_COLUMNS) + 1):
+                ws.cell(row=r, column=i).fill = PatternFill("solid", fgColor=PEACH)
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(TEAM_COLUMNS))}{max(2, len(rows) + 1)}"
+
+
+def _sheet_remarks(wb, meta: dict) -> None:
+    from openpyxl.styles import Alignment, Font
+    rm = meta.get("_remarks") or {}
+    if not rm:
+        return
+    ws = wb.create_sheet("Special Arrangements")
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 110
+    ws["A1"] = "Special arrangements"
+    ws["A1"].font = Font(size=13, bold=True, color=NAVY)
+    r = 3
+    for block in ("acc", "sc"):
+        b = rm.get(block) or {}
+        ws.cell(row=r, column=1, value=b.get("label") or block).font = Font(bold=True)
+        c = ws.cell(row=r, column=2, value=b.get("text") or "")
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.row_dimensions[r].height = max(30, 15 * (1 + (b.get("text") or "").count("\n")))
+        ws.cell(row=r + 1, column=2, value=f"Last edited by {b.get('updated_by')} · {b.get('updated_at')}"
+                ).font = Font(size=9, color="6B7688")
+        r += 3
+
+
+def _sheet_terms(wb, meta: dict) -> None:
+    from openpyxl.styles import Font, PatternFill
+    t = wb.create_sheet("Payment Terms")
+    t.append(["Supplier (master-data)", "Terms", "Deposit %", "Due days", "Basis"])
+    for c in t[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor=NAVY)
+    for row in meta.get("_terms_table") or []:
+        t.append([row.get("supplier_name"), row.get("terms"), row.get("deposit_pct"),
+                  row.get("due_days"), row.get("basis")])
+    for col, w in zip("ABCDE", (40, 80, 10, 10, 14)):
+        t.column_dimensions[col].width = w
+
+
+def _save(wb, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.stem + ".tmp.xlsx")
+    wb.save(tmp)
+    tmp.replace(path)
+    return path
+
+
+def write_register_xlsx(rows: list[dict], meta: dict, path: Path) -> Path:
+    """The OneDrive backup: the team's register layout first, then the app's view."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    _sheet_team_register(wb.active, rows)
+    wb.active.title = "updated"
+    _sheet_app_register(wb.create_sheet("App register"), rows, meta,
+                        "every line the app holds, incl. paid")
+    _sheet_remarks(wb, meta)
+    _sheet_terms(wb, meta)
+    return _save(wb, path)
+
+
 def write_xlsx(rows: list[dict], meta: dict, path: Path, subtitle: str = "") -> Path:
     from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.utils import get_column_letter
-
     wb = Workbook()
     ws = wb.active
     ws.title = "Payment Request"
-    navy = "1B2A4A"
+    _sheet_app_register(ws, rows, meta, subtitle)
+    _sheet_remarks(wb, meta)
+    _sheet_terms(wb, meta)
+    return _save(wb, path)
+
+
+def _sheet_app_register(ws, rows: list[dict], meta: dict, subtitle: str = "") -> None:
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    navy = NAVY
     thin = Side(style="thin", color="E3E7EE")
     ws["A1"] = TITLE
     ws["A1"].font = Font(size=14, bold=True, color=navy)
@@ -201,12 +393,7 @@ def write_xlsx(rows: list[dict], meta: dict, path: Path, subtitle: str = "") -> 
     r = hdr
     for row in rows:
         r += 1
-        cur = row.get("currency") or "USD"
-        amt = float(row.get("amount") or 0)
-        vals = {f"_{c.lower()}": (amt if cur == c else None) for c in ("USD", "AUD", "GBP", "EUR")}
-        vals["_flags"] = "; ".join(row.get("flags") or [])
-        vals["_final"] = "" if row.get("status") in ("Paid", "Not Payable") else (
-            "Yes" if row.get("finalised") else "No")
+        vals = _cell_values(row)
         for k in totals:
             totals[k] += (vals.get(k) if k.startswith("_") else row.get(k)) or 0
         for i, (_, key, _, kind) in enumerate(COLUMNS, 1):
@@ -236,24 +423,6 @@ def write_xlsx(rows: list[dict], meta: dict, path: Path, subtitle: str = "") -> 
     ws.freeze_panes = ws.cell(row=hdr + 1, column=5)
     ws.auto_filter.ref = f"A{hdr}:{get_column_letter(len(COLUMNS))}{max(hdr + 1, r - 1)}"
 
-    # Payment terms in force, so the workbook explains its own due dates.
-    t = wb.create_sheet("Payment Terms")
-    t.append(["Supplier (master-data)", "Terms", "Deposit %", "Due days", "Basis"])
-    for c in t[1]:
-        c.font = Font(bold=True, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor=navy)
-    for row in meta.get("_terms_table") or []:
-        t.append([row.get("supplier_name"), row.get("terms"), row.get("deposit_pct"),
-                  row.get("due_days"), row.get("basis")])
-    for col, w in zip("ABCDE", (40, 80, 10, 10, 14)):
-        t.column_dimensions[col].width = w
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.stem + ".tmp.xlsx")
-    wb.save(tmp)
-    tmp.replace(path)
-    return path
-
 
 def xlsx_name(day: dt.date | None = None) -> str:
     day = day or dt.datetime.now(AWST).date()
@@ -266,7 +435,8 @@ def main() -> int:
     tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
     tmp.replace(PAYLOAD)
     rows, when = merged(payload)
-    meta = {**payload["meta"], **when, "_terms_table": payload["terms_table"]}
+    meta = {**payload["meta"], **when, "_terms_table": payload["terms_table"],
+            "_remarks": L.get_remarks()}
     window = filter_rows(rows, window="window")
     out = write_xlsx(window, meta, HERE / xlsx_name(),
                      f"{payload['meta']['forecast_weeks']}-week rolling forecast, all states")
@@ -279,6 +449,8 @@ def main() -> int:
     print(f"xlsx    -> {out.name} ({len(window)} lines in the "
           f"{payload['meta']['forecast_weeks']}-week window)")
     print(f"request {when['next_request']}: {len(req)} lines, USD {usd:,.2f}, AUD {aud:,.2f}")
+    if s.get("archived"):
+        print(f"kept {s['archived']} paid / requested lines of POs Cin7 no longer lists as open")
     if s["no_terms"]:
         print(f"no payment terms in master-data for: {', '.join(s['no_terms'])}")
     return 0

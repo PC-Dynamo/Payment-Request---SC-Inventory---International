@@ -120,6 +120,16 @@ details{border:1px solid var(--line);border-radius:9px;padding:8px 12px;margin-t
 details summary{cursor:pointer;color:var(--navy);font-weight:600}
 details pre{white-space:pre-wrap;font-size:11.5px;color:var(--muted);margin:8px 0 0}
 .notes li{margin:3px 0}
+/* special arrangements tab */
+textarea.remark{width:100%;min-height:230px;font:inherit;font-size:13px;line-height:1.55;border:1px solid var(--line);
+  border-radius:8px;padding:10px 12px;resize:vertical;color:var(--ink);background:#fff}
+textarea.remark:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.rmbar{display:flex;gap:10px;align-items:center;margin-top:8px}
+.rmbar .muted{font-size:12px}
+.rmbar .dirty{color:var(--warn);font-weight:600}
+table.rules{border-collapse:collapse;width:100%;font-size:12.5px}
+table.rules th,table.rules td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+table.rules th{color:var(--navy);background:#fafbfd}
 table.plain{border-collapse:collapse;width:100%;font-size:12px}
 table.plain th,table.plain td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}
 /* drawer */
@@ -157,6 +167,7 @@ dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
     <div class="tabs" role="tablist">
       <button role="tab" id="tabReg" aria-selected="true" data-t="reg">Payment Request</button>
       <button role="tab" id="tabAna" aria-selected="false" data-t="ana">Analysis &amp; Sources</button>
+      <button role="tab" id="tabSpec" aria-selected="false" data-t="spec">Special Arrangements</button>
     </div>
     <div class="actions">
       <button id="bAdd" class="primary">+ Add line</button>
@@ -185,6 +196,7 @@ dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
       <span class="f">Request date <input type="date" id="fReqF"><span class="to">to</span><input type="date" id="fReqT"></span>
       <span class="f">ETD <input type="date" id="fEtdF"><span class="to">to</span><input type="date" id="fEtdT"></span>
       <span class="f">ETA <input type="date" id="fEtaF"><span class="to">to</span><input type="date" id="fEtaT"></span>
+      <span class="f">Accounts scheduled <input type="date" id="fAccF"><span class="to">to</span><input type="date" id="fAccT"></span>
       <button id="bClear">Clear filters</button>
       <span class="fcount" id="fCount"></span>
     </div>
@@ -222,6 +234,25 @@ dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
       <details id="dAudit"><summary>Change log</summary><div id="audit" class="muted" style="font-size:12px">Open to load…</div></details>
     </section>
   </div>
+
+  <!-- TAB 3: special arrangements - one remark block each for ACC and SC -->
+  <div id="pSpec" hidden>
+    <section>
+      <h2>Special arrangements <span class="hint">Anything the other team should know when preparing or paying the request. Each team keeps its own block; every save is recorded.</span></h2>
+      <div class="charts">
+        <div class="card"><h3>Accounts (ACC)</h3><div class="cap" id="rmAccMeta"></div>
+          <textarea class="remark" id="rmAcc" data-b="acc" placeholder="Accounts remarks…"></textarea>
+          <div class="rmbar"><button class="primary rmsave" data-b="acc">Save ACC remarks</button><span class="muted" id="rmAccMsg"></span></div></div>
+        <div class="card"><h3>Supply Chain (SC)</h3><div class="cap" id="rmScMeta"></div>
+          <textarea class="remark" id="rmSc" data-b="sc" placeholder="Supply Chain remarks…"></textarea>
+          <div class="rmbar"><button class="primary rmsave" data-b="sc">Save SC remarks</button><span class="muted" id="rmScMsg"></span></div></div>
+      </div>
+    </section>
+    <section>
+      <h2>Applied automatically by the app <span class="hint">How each supplier's payments are timed today - change a supplier's terms in Master Data</span></h2>
+      <div id="specRules"></div>
+    </section>
+  </div>
 </div>
 
 <aside id="drawer" aria-hidden="true">
@@ -242,7 +273,7 @@ const dd=s=>{if(!s)return"";const[y,m,d]=String(s).slice(0,10).split("-");return
 const SER=["--s1","--s2","--s3","--s4","--s5"].map(v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim());
 const CURS=["USD","AUD","GBP","EUR"];
 let DATA=[],META=null,charts={},sortKey=null,sortDir=1,selected=new Set(),TAB="reg",SPECIAL={};
-const F0={payee:"",fin:"",group:"date",win:"open",state:"",seg:"",cur:"",sup:"",stage:"",status:"",type:"",q:"",reqF:"",reqT:"",etdF:"",etdT:"",etaF:"",etaT:""};
+const F0={payee:"",fin:"",group:"date",win:"open",state:"",seg:"",cur:"",sup:"",stage:"",status:"",type:"",q:"",reqF:"",reqT:"",etdF:"",etdT:"",etaF:"",etaT:"",accF:"",accT:""};
 const F={...F0};
 try{Object.assign(F,JSON.parse(localStorage.getItem("prf3")||"{}"));F.q=""}catch(e){}
 function saveF(){try{localStorage.setItem("prf3",JSON.stringify(F))}catch(e){}}
@@ -282,7 +313,7 @@ function buildFilters(){
   fillSelects();
   const bind=(id,key,ev="change")=>{const el=$(id);el.value=F[key]||"";el.addEventListener(ev,()=>{F[key]=el.value.trim?el.value.trim():el.value;if(key!=="q")saveF();render()})};
   bind("#fSup","sup");bind("#fStage","stage");bind("#fStatus","status");bind("#fType","type");bind("#fQ","q","input");
-  ["reqF","reqT","etdF","etdT","etaF","etaT"].forEach(x=>bind("#f"+x[0].toUpperCase()+x.slice(1),x));
+  ["reqF","reqT","etdF","etdT","etaF","etaT","accF","accT"].forEach(x=>bind("#f"+x[0].toUpperCase()+x.slice(1),x));
   $("#bClear").onclick=()=>{Object.assign(F,F0);saveF();location.reload()};
 }
 function fillSelects(){
@@ -313,13 +344,14 @@ function passBase(r){  // every filter except the Show window (KPI cards are win
   if(!between(r.request_date,F.reqF,F.reqT))return false;
   if(!between(r.etd,F.etdF,F.etdT))return false;
   if(!between(etaOf(r),F.etaF,F.etaT))return false;
+  if(!between(r.acc_scheduled_date,F.accF,F.accT))return false;
   if(F.q&&![r.po,r.vendor_entity,r.supplier,r.invoice_no,r.branch,r.pay_type,r.comment,r.container].join(" ").toLowerCase().includes(F.q.toLowerCase()))return false;
   return true;
 }
 // Picking a status means "find those lines": it searches every line rather than
 // only the Show window (UAT: "Paid" returned nothing inside the 4-week view).
 const rowsF=()=>DATA.filter(r=>passBase(r)&&(F.status?true:inWin(r)));
-function activeFilterCount(){return ["payee","fin","state","seg","cur","sup","stage","status","type","q","reqF","reqT","etdF","etdT","etaF","etaT"].filter(x=>F[x]).length}
+function activeFilterCount(){return ["payee","fin","state","seg","cur","sup","stage","status","type","q","reqF","reqT","etdF","etdT","etaF","etaT","accF","accT"].filter(x=>F[x]).length}
 
 // ------------------------------------------------------------------ KPIs + totals
 function sum(rows,cur,field="amount"){return rows.filter(r=>r.currency===cur).reduce((a,r)=>a+(+r[field]||0),0)}
@@ -661,7 +693,6 @@ function renderNotes(){
     m.unmapped_skus&&m.unmapped_skus.length?`<b>SKUs not in the master</b> after re-reading it: ${m.unmapped_skus.map(esc).join(", ")}.`:"",
     m.unknown_suppliers&&m.unknown_suppliers.length?`<b>Suppliers not in the master</b>: ${m.unknown_suppliers.map(esc).join(", ")}.`:"",
   ])}</ul>
-  <details><summary>Special arrangements (override master-data)</summary><pre>${esc(JSON.stringify(SPECIAL,null,1))}</pre></details>
   <details><summary>Last refresh log</summary><pre>${esc((m.run_log||[]).join("\n"))}</pre></details>`;
 }
 $("#dAudit").addEventListener("toggle",async e=>{
@@ -671,9 +702,53 @@ $("#dAudit").addEventListener("toggle",async e=>{
   catch(err){$("#audit").textContent="Could not load: "+err.message}
 });
 
+// ------------------------------------------------------------------ special arrangements
+const RM={acc:["#rmAcc","#rmAccMeta","#rmAccMsg"],sc:["#rmSc","#rmScMeta","#rmScMsg"]};
+let RM_SAVED={};
+function rmMeta(b,x){$(RM[b][1]).textContent=x&&x.updated_at?`Last edited by ${x.updated_by} · ${x.updated_at}`:""}
+async function loadRemarks(){
+  try{const j=await (await fetch("api/remarks",{cache:"no-store"})).json();
+    Object.keys(RM).forEach(b=>{const x=j[b]||{};const ta=$(RM[b][0]);
+      if(ta.value===RM_SAVED[b]||RM_SAVED[b]===undefined)ta.value=x.text||"";   // keep unsaved typing
+      RM_SAVED[b]=x.text||"";rmMeta(b,x);$(RM[b][2]).textContent="";$(RM[b][2]).className="muted"})}
+  catch(err){toast("Could not load the remarks: "+err.message)}
+}
+document.querySelectorAll("textarea.remark").forEach(ta=>ta.addEventListener("input",()=>{
+  const b=ta.dataset.b,m=$(RM[b][2]);const dirty=ta.value!==RM_SAVED[b];
+  m.textContent=dirty?"Unsaved changes":"";m.className=dirty?"muted dirty":"muted"}));
+document.querySelectorAll(".rmsave").forEach(btn=>btn.onclick=async()=>{
+  const b=btn.dataset.b,ta=$(RM[b][0]);btn.disabled=true;
+  try{const j=await api("api/remarks",{method:"POST",body:JSON.stringify({block:b,text:ta.value})});
+    RM_SAVED[b]=j.remark.text||"";ta.value=RM_SAVED[b];rmMeta(b,j.remark);
+    $(RM[b][2]).textContent="Saved";$(RM[b][2]).className="muted";toast(`${b==="acc"?"ACC":"SC"} remarks saved`)}
+  catch(err){$(RM[b][2]).textContent="Not saved: "+err.message;$(RM[b][2]).className="muted dirty"}
+  finally{btn.disabled=false}});
+addEventListener("beforeunload",e=>{if(Object.keys(RM).some(b=>RM_SAVED[b]!==undefined&&$(RM[b][0]).value!==RM_SAVED[b])){e.preventDefault();e.returnValue=""}});
+function renderSpecRules(){
+  // One row per supplier: the rule its open payments follow today.
+  const by={};
+  DATA.filter(r=>r.source==="auto"&&!r.archived).forEach(r=>{
+    const k=r.supplier||r.vendor;(by[k]=by[k]||{rules:{},n:0,bulk:false});by[k].n++;if(r.bulk)by[k].bulk=true;
+    const rule=(r.terms_rule||"")+"|"+(r.terms_source||"");by[k].rules[rule]=(by[k].rules[rule]||0)+1});
+  const rows=Object.entries(by).sort((a,b)=>a[0].localeCompare(b[0])).map(([s,v])=>{
+    const [rule,src]=Object.entries(v.rules).sort((a,b)=>b[1]-a[1])[0][0].split("|");
+    return `<tr><td>${esc(s)}</td><td>${esc(rule)}${v.bulk?' <span class="rv">BULK</span>':""}</td><td class="muted">${esc(src)}</td><td class="muted">${v.n}</td></tr>`}).join("");
+  const sp=Object.entries(SPECIAL||{}).map(([s,v])=>`<li><b>${esc(s)}</b>: ${esc(v.rule||"")}</li>`).join("");
+  $("#specRules").innerHTML=`<ul class="notes">
+      <li><b>Pay runs</b>: Tuesday for supplier payments and USD freight; Thursday for AUD charges. A line still unpaid after its run moves to the next one (↻).</li>
+      <li><b>K-Life bulk orders</b>: the deposit is requested on the bulk (China stock) order (purple, BULK); deposits on K-Life shipment POs are flagged CHECK.</li>
+      <li><b>New POs not yet approved in Cin7</b> are listed as Awaiting Approval and never requested.</li>
+      ${sp}</ul>
+    <table class="rules"><tr><th>Supplier</th><th>Rule the app applies</th><th>Based on</th><th>Lines</th></tr>${rows||'<tr><td colspan="4" class="muted">No open lines.</td></tr>'}</table>`;
+}
+
 // ------------------------------------------------------------------ tabs, export, refresh
-function setTab(t){TAB=t;$("#tabReg").setAttribute("aria-selected",t==="reg");$("#tabAna").setAttribute("aria-selected",t==="ana");
-  $("#pReg").hidden=t!=="reg";$("#pAna").hidden=t!=="ana";try{localStorage.setItem("prtab",t)}catch(e){}if(t==="ana")renderCharts()}
+const TABS={reg:["#tabReg","#pReg"],ana:["#tabAna","#pAna"],spec:["#tabSpec","#pSpec"]};
+function setTab(t){if(!TABS[t])t="reg";TAB=t;
+  Object.entries(TABS).forEach(([k,[b,p]])=>{$(b).setAttribute("aria-selected",k===t);$(p).hidden=k!==t});
+  $(".filters").hidden=t==="spec";            // filters do not apply to the remarks
+  try{localStorage.setItem("prtab",t)}catch(e){}
+  if(t==="ana")renderCharts();if(t==="spec"){loadRemarks();renderSpecRules()}}
 document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>setTab(b.dataset.t));
 $("#bExport").onclick=()=>{
   const rows=VIEW;                      // exactly what the register lists, in its order
@@ -682,7 +757,7 @@ $("#bExport").onclick=()=>{
   const add=(n,v)=>{const i=document.createElement("input");i.name=n;i.value=v;f.appendChild(i)};
   add("line_ids",JSON.stringify(rows.map(r=>r.line_id)));
   const bits=[winLabel(),F.state||"all states",F.seg||"Retail + Commercial",F.cur,F.sup,F.stage,F.status,F.type,
-    F.reqF||F.reqT?`request ${F.reqF||"…"}–${F.reqT||"…"}`:"",F.etdF||F.etdT?`ETD ${F.etdF||"…"}–${F.etdT||"…"}`:"",F.etaF||F.etaT?`ETA ${F.etaF||"…"}–${F.etaT||"…"}`:"",F.q?`search "${F.q}"`:""];
+    F.reqF||F.reqT?`request ${F.reqF||"…"}–${F.reqT||"…"}`:"",F.etdF||F.etdT?`ETD ${F.etdF||"…"}–${F.etdT||"…"}`:"",F.etaF||F.etaT?`ETA ${F.etaF||"…"}–${F.etaT||"…"}`:"",F.accF||F.accT?`Accounts scheduled ${F.accF||"…"}–${F.accT||"…"}`:"",F.q?`search "${F.q}"`:""];
   add("label",bits.filter(Boolean).join(" · "));
   document.body.appendChild(f);f.submit();f.remove();
 };

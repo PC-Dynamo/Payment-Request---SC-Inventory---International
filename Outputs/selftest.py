@@ -231,8 +231,58 @@ def test_uat_13oct():
     check(lines[0]["eta_port"] == "2026-10-17", "a one-day rounding difference is ignored")
 
 
+def test_oct15():
+    """ACC remarks, payment archive, OneDrive backup layout (15 Oct 2026)."""
+    import build_report as BR
+    with tempfile.TemporaryDirectory() as tmp:
+        L.DB = Path(tmp) / "t.db"
+        rm = L.get_remarks()
+        check("CSP - 14 days - prior to arrival" in rm["acc"]["text"] and "FDF - 45 days" in rm["acc"]["text"],
+              "ACC block starts with the two points from the workbook")
+        check(rm["sc"]["text"].startswith("K-Life"), "SC block starts with the known SC arrangements")
+        saved = L.set_remark("acc", "Line one\r\nLine two", "acc@test")
+        check(saved["text"] == "Line one\nLine two" and saved["updated_by"] == "acc@test", "remarks save with author")
+        for bad in (("xx", "t"), ("sc", "x" * (L.REMARK_MAX + 1))):
+            try:
+                L.set_remark(*bad, "t")
+                check(False, f"bad remark accepted: {bad[0]}")
+            except ValueError:
+                pass
+        ln = {"line_id": "PO-70001|full", "po": "PO-70001", "kind": "full", "supplier": "X", "vendor": "X",
+              "currency": "USD", "amount_auto": 10.0, "due_auto": "2026-10-01", "flags": [], "stage": "On Its Way"}
+        check(BR.is_payment_record({"status": "Paid"}) and not BR.is_payment_record({"finalised": 1})
+              and not BR.is_payment_record({"amount": 5.0}), "only paid / requested / written-off lines are archived")
+        check(BR.effective_state(ln, {"PO-70001|balance": {"status": "Paid"}}) == {"status": "Paid"},
+              "a full line reads its old balance record")
+        L.archive_lines([ln])
+        snaps = L.archived_snapshots()
+        closed = BR.closed_archive(snaps, [], {"pos": {"PO-70001": {"stage": "Received"}}})
+        check(len(closed) == 1 and closed[0]["archived"] and closed[0]["stage"] == "Received",
+              "a recorded line outlives its PO once Cin7 closes it")
+        check(BR.closed_archive(snaps, [dict(ln)], {}) == [], "while the PO is open the live line is used")
+        rows, _ = P.merge(closed, {"PO-70001|full": {"status": "Paid", "paid_date": "2026-10-13"}}, [],
+                          D("2026-10-15"), 4)
+        check(rows[0]["status"] == "Paid" and rows[0]["paid_date"] == "2026-10-13", "archived line keeps its record")
+        rows[0]["not_final"] = False
+        path = BR.write_register_xlsx(rows, {"_remarks": L.get_remarks(), "_terms_table": []},
+                                      Path(tmp) / "reg.xlsx")
+        import openpyxl
+        wb = openpyxl.load_workbook(path)
+        hdr = [c.value for c in wb["updated"][1]]
+        check(wb.sheetnames[:2] == ["updated", "App register"] and hdr[11] == "Payment Status/Type"
+              and hdr[8] == "ETA\n(Forwarder)" and len(hdr) == 24, "backup uses the team's register layout")
+        check(wb["updated"]["L2"].value == "Paid" and "Special Arrangements" in wb.sheetnames,
+              "status wording and remarks sheet in the backup")
+        wb.close()
+    L.DB = HERE / "ledger.db"
+    check(BR.status_type({"source": "auto", "kind": "deposit", "pct": 30, "status": "Paid"}) == "30% deposit paid"
+          and BR.status_type({"source": "auto", "kind": "balance", "status": "For Payment"}) == "Balance for payment"
+          and BR.status_type({"source": "manual", "pay_type": "GST Payment", "status": "Requested"}) == "GST Payment",
+          "Payment Status/Type follows the team's wording")
+
+
 def main() -> int:
-    for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct, test_data):
+    for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct, test_oct15, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

@@ -97,9 +97,24 @@ def api_data():
 
 
 # ----------------------------------------------------------------------- edits
-def _known_auto(line_id: str) -> bool:
+def _auto_line(line_id: str) -> dict | None:
     p = _payload() or {}
-    return any(ln["line_id"] == line_id for ln in p.get("auto_lines") or [])
+    for ln in (p.get("auto_lines") or []) + (p.get("archived_lines") or []):
+        if ln["line_id"] == line_id:
+            return ln
+    return None
+
+
+def _known_auto(line_id: str) -> bool:
+    return _auto_line(line_id) is not None
+
+
+def _archive_if_recorded(line_id: str) -> None:
+    """A payment just recorded outlives the PO even before the next rebuild."""
+    ln = _auto_line(line_id)
+    if ln and not ln.get("archived") and BR.is_payment_record(
+            BR.effective_state(ln, L.all_line_states())):
+        L.archive_lines([ln])
 
 
 def _ledger_id(line_id: str) -> str:
@@ -135,6 +150,7 @@ def api_line():
             row = L.update_manual(int(line_id[1:]), changes, _who())
         elif _known_auto(line_id):
             row = L.set_line_state(_ledger_id(line_id), changes, _who())
+            _archive_if_recorded(line_id)
         else:
             return _bad("unknown line", 404)
     except KeyError:
@@ -183,9 +199,23 @@ def api_submit():
             L.update_manual(r["manual_id"], ch, who)
         else:
             L.set_line_state(_ledger_id(r["line_id"]), ch, who)
+            _archive_if_recorded(r["line_id"])
         done += 1
     return jsonify(ok=True, requested=done, request_date=when["next_request"],
                    request_date_aud=when.get("next_request_aud"))
+
+
+@app.route("/api/remarks", methods=["GET", "POST"])
+def api_remarks():
+    """The Special Arrangements tab: one free-text block each for ACC and SC."""
+    if request.method == "GET":
+        return jsonify(L.get_remarks())
+    body = request.get_json(silent=True) or {}
+    try:
+        saved = L.set_remark(str(body.get("block") or ""), body.get("text"), _who())
+    except ValueError as exc:
+        return _bad(str(exc))
+    return jsonify(ok=True, remark=saved)
 
 
 @app.route("/api/audit")
@@ -215,7 +245,8 @@ def export_selected():
 def _send_xlsx(rows, p, when, sub):
     buf = io.BytesIO()
     tmp = OUTPUTS / "cache" / f"export-{os.getpid()}-{threading.get_ident()}.xlsx"
-    BR.write_xlsx(rows, {**p["meta"], **when, "_terms_table": p["terms_table"]}, tmp, sub)
+    BR.write_xlsx(rows, {**p["meta"], **when, "_terms_table": p["terms_table"],
+                         "_remarks": L.get_remarks()}, tmp, sub)
     buf.write(tmp.read_bytes())
     tmp.unlink(missing_ok=True)
     buf.seek(0)

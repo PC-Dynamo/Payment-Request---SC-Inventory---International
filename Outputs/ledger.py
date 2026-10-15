@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS manual_line (
   created_by TEXT, created_at TEXT, updated_by TEXT, updated_at TEXT,
   deleted INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS remarks (
+  block TEXT PRIMARY KEY, text TEXT, updated_by TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS line_archive (
+  line_id TEXT PRIMARY KEY, po TEXT, snapshot TEXT, archived_at TEXT
+);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   at TEXT, who TEXT, action TEXT, line_id TEXT, detail TEXT
@@ -182,6 +188,73 @@ def stored(line_id: str) -> dict:
         else:
             r = con.execute("SELECT * FROM line_state WHERE line_id = ?", (line_id,)).fetchone()
         return dict(r) if r else {}
+
+
+# ------------------------------------------------------- special arrangements
+# Two free-text blocks on the "Special Arrangements" tab: one for Accounts, one
+# for Supply Chain. Seeded once from what each team had already written down.
+REMARK_BLOCKS = {"acc": "Accounts (ACC)", "sc": "Supply Chain (SC)"}
+REMARK_MAX = 4000
+DEFAULT_REMARKS = {
+    "acc": ("Instructions (from the Special arrangements tab of the payment request workbook):\n"
+            "CSP - 14 days - prior to arrival\n"
+            "FDF - 45 days - after arrival"),
+    "sc": ("K-Life: the deposit is paid on the bulk (China stock) order, then allocated to the "
+           "shipment POs.\n"
+           "Kpower, Iron Master, Bodylonger, Imbell: no payment on their bulk orders.\n"
+           "CSP: no deposit since July 2026 - one payment before arrival.\n"
+           "Crossmax: 30% deposit; balance about 5 days before the ready date."),
+}
+DEFAULT_REMARK_WHO = {"acc": "seed: payment request workbook", "sc": "seed: SC notes (Phoenix, Idelyn)"}
+
+
+def get_remarks() -> dict:
+    out = {}
+    with connect() as con:
+        for b, label in REMARK_BLOCKS.items():
+            r = con.execute("SELECT * FROM remarks WHERE block = ?", (b,)).fetchone()
+            if r is None:
+                con.execute("INSERT INTO remarks(block, text, updated_by, updated_at) VALUES (?,?,?,?)",
+                            (b, DEFAULT_REMARKS[b], DEFAULT_REMARK_WHO[b], now_awst()))
+                r = con.execute("SELECT * FROM remarks WHERE block = ?", (b,)).fetchone()
+            out[b] = {"label": label, **dict(r)}
+    return out
+
+
+def set_remark(block: str, text, who: str) -> dict:
+    if block not in REMARK_BLOCKS:
+        raise ValueError("unknown remarks block")
+    text = str(text or "").replace("\r\n", "\n").strip()
+    if len(text) > REMARK_MAX:
+        raise ValueError(f"remarks are limited to {REMARK_MAX:,} characters")
+    get_remarks()                              # make sure the defaults exist first
+    with connect() as con:
+        before = con.execute("SELECT text FROM remarks WHERE block = ?", (block,)).fetchone()
+        con.execute("INSERT OR REPLACE INTO remarks(block, text, updated_by, updated_at) VALUES (?,?,?,?)",
+                    (block, text, who, now_awst()))
+        _audit(con, who, f"edit {REMARK_BLOCKS[block]} remarks", f"remarks:{block}",
+               {"before": before[0] if before else None, "after": text})
+    return get_remarks()[block]
+
+
+# ------------------------------------------------------------ payment archive
+# A PO drops out of Cin7's open list when it is received, and its payment lines
+# would go with it. Every line someone recorded a payment against is kept here
+# as a snapshot, so the register (and the OneDrive backup) keeps its history.
+def archive_lines(lines: list[dict]) -> int:
+    if not lines:
+        return 0
+    with connect() as con:
+        for ln in lines:
+            con.execute("INSERT OR REPLACE INTO line_archive(line_id, po, snapshot, archived_at) "
+                        "VALUES (?,?,?,?)", (ln["line_id"], ln.get("po"), json.dumps(ln, default=str),
+                                             now_awst()))
+    return len(lines)
+
+
+def archived_snapshots() -> list[dict]:
+    with connect() as con:
+        return [json.loads(r["snapshot"]) for r in con.execute("SELECT snapshot FROM line_archive")]
 
 
 def recent_audit(limit: int = 200) -> list[dict]:
