@@ -439,7 +439,8 @@ function cell(r,c){
     case "vendor_entity": return `${esc(r.vendor_entity)}${r.flags&&r.flags.length?` <span class="flag" title="${esc(r.flags.join("\n"))}">⚠</span>`:""}`;
     case "po": return cin7Link(r)+(r.bulk?'<span class="rv" title="Bulk order">BULK</span>':r.review?'<span class="rv" title="Check: deposit may be on the bulk order">CHECK</span>':"");
     case "etd": return esc(dd(r.etd))+(r.etd_estimated&&r.etd?'<span class="muted" title="estimated from ETA and transit time">*</span>':"");
-    case "request_date": return esc(dd(r.request_date))+(r.carried_from?`<span class="muted" title="Planned for ${esc(dd(r.carried_from))}, not paid yet - moved to the next pay run">↻</span>`:"");
+    case "request_date": return esc(dd(r.request_date))+(r.carried_from?`<span class="muted" title="Planned for ${esc(dd(r.carried_from))}, not paid yet - moved to the next pay run">↻</span>`:"")
+      +(r.replanned_from?`<span class="muted" title="Planned for ${esc(dd(r.replanned_from))}; the due date has moved since, so the request date moved with it">⇢</span>`:"");
     case "due_date": return `<span class="${r.overdue?"od":""}" title="${esc(r.due_overridden?"due date set by hand":(r.terms_rule||""))}">${esc(dd(r.due_date))||'<span class="muted">TBC</span>'}</span>`;
     case "status": return `<span class="pill st-${esc(String(r.status).replace(/\s+/g,""))}" title="${esc(r.assumed_paid||"")}">${esc(statusLabel(r))}</span>`;
     case "USD":case "AUD":case "GBP":case "EUR":
@@ -470,7 +471,7 @@ function renderTable(){
   $("#tbl thead").innerHTML="<tr>"+COLS.map(c=>`<th data-k="${c[0]}" class="${c[3]==="money"?"num":""}">${esc(c[1])}${sortKey===c[0]?(sortDir>0?" ▲":" ▼"):""}</th>`).join("")+"</tr>";
   const group=!!F.group&&!sortKey;
   const pname=x=>x.payee==="Supplier"?"Supplier (factory)":x.payee==="Forwarder"?"Forwarder / broker":"Other";
-  const gdate=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.status==="Awaiting Approval"?"Awaiting PO approval in Cin7 (New, not approved) — not requested yet":x.request_date?`Pay run ${dd(x.request_date)}${x.request_date===x.next_run?" (next)":""}`:"Date TBC — no ETA yet";
+  const gdate=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.status==="Awaiting Approval"?"Awaiting PO approval in Cin7 (New, not approved) — not requested unless a request date is set":x.request_date?`Pay run ${dd(x.request_date)}${x.request_date===x.next_run?" (next)":""}`:"Date TBC — no ETA yet";
   const gname=x=>F.group==="payee"?pname(x):F.group==="date_payee"?`${gdate(x)} · ${pname(x)}`:gdate(x);
   if(group&&F.group!=="date"){const ord=x=>({Supplier:0,Forwarder:1,Other:2})[x.payee]??3;
     rows=[...rows].sort((a,b)=>F.group==="payee"?ord(a)-ord(b):((a.request_date||"9")+ord(a)).localeCompare((b.request_date||"9")+ord(b)));VIEW=rows}
@@ -684,7 +685,9 @@ function renderNotes(){
     `<b>Scope</b>: ${s.open_pos} open international POs; ${s.bulk_excluded} China-stock bulk orders excluded (no vessel / ETA yet). Pay runs: <b>Tuesday</b> for supplier payments and USD freight, <b>Thursday</b> for AUD charges. A line joins the last pay run on or before its due date; a line still unpaid after its pay run moves to the next one (↻).`,
     `<b>USD</b>: Cin7 holds POs in landed AUD, so USD = qty × Cin7 costUSD, pinned per PO line when first seen. Values marked ~ are estimated — enter the invoice amount to override.`,
     `<b>When a payment is requested</b>: percentages come from master-data terms; whether a deposit is taken and how many days before ETD / forwarder ETA the balance is requested follow the team's own payment history (${esc(m.calibration&&m.calibration.source||"payment workbook")}). Each line's rule is shown in ✎.`,
-    `<b>Awaiting Approval</b>: New POs not yet approved in Cin7 are drafts — listed, never requested. A deposit is requested ${"6"} days after approval.`,
+    `<b>Awaiting Approval</b>: New POs not yet approved in Cin7 are drafts — listed, not requested until someone sets a payment request date (Great Century's PI is paid in advance and the PO approved when it is paid). A deposit is requested ${"6"} days after approval.`,
+    `<b>Planned request dates follow the PO</b>: a request date set by hand or brought in from the team's workbook moves with the due date when the PO slips (or comes forward) by more than a week (⇢). A line already Requested keeps its date.`,
+    `<b>Deposit on a full payment</b>: choosing a "Deposit …%" payment type on a line the app had as one full payment splits the PO into the deposit and a balance (PO value less the deposit).`,
     `<b>Peach rows</b> = not finalised yet (PI / amount still to confirm), as in the team's Excel. A line counts as finalised once its PI amount or invoice no. is entered, or when the Final box is ticked. The app estimates USD from Cin7 costs - the supplier's PI amount always has to be entered by hand.`,
     `<b>Payee</b>: Supplier (factory) = PO payments; Forwarder / broker = freight, customs, GST, duty, cartage (Mainfreight, Ice Cargo); Other = e.g. inspections.`,
     `<b>Paid (assumed)</b>: deposits of approved POs older than 3 weeks or on the water, and pre-shipment payments of POs on the water, until someone records otherwise.`,
@@ -737,7 +740,8 @@ function renderSpecRules(){
   $("#specRules").innerHTML=`<ul class="notes">
       <li><b>Pay runs</b>: Tuesday for supplier payments and USD freight; Thursday for AUD charges. A line still unpaid after its run moves to the next one (↻).</li>
       <li><b>K-Life bulk orders</b>: the deposit is requested on the bulk (China stock) order (purple, BULK); deposits on K-Life shipment POs are flagged CHECK.</li>
-      <li><b>New POs not yet approved in Cin7</b> are listed as Awaiting Approval and never requested.</li>
+      <li><b>New POs not yet approved in Cin7</b> are listed as Awaiting Approval and requested only once someone sets a payment request date.</li>
+      <li><b>Planned request dates</b> move with the due date when a PO slips by more than a week (⇢).</li>
       ${sp}</ul>
     <table class="rules"><tr><th>Supplier</th><th>Rule the app applies</th><th>Based on</th><th>Lines</th></tr>${rows||'<tr><td colspan="4" class="muted">No open lines.</td></tr>'}</table>`;
 }

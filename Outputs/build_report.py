@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -49,13 +50,18 @@ def _branch_maps() -> tuple[dict[str, str], dict[str, str]]:
         return {}, {}
 
 
+def ledger_id(ln: dict, states: dict) -> str:
+    """Which ledger record an auto line uses: a 'full' line may still use the
+    record made on its old 'balance' line (see payments.merge)."""
+    if ln["line_id"] not in states and ln.get("kind") == "full" \
+            and f"{ln['po']}|deposit" not in states and f"{ln['po']}|balance" in states:
+        return f"{ln['po']}|balance"
+    return ln["line_id"]
+
+
 def effective_state(ln: dict, states: dict) -> dict:
-    """The ledger record behind an auto line (a 'full' line may still use the
-    record made on its old 'balance' line - see payments.merge)."""
-    st = states.get(ln["line_id"]) or {}
-    if not st and ln.get("kind") == "full" and f"{ln['po']}|deposit" not in states:
-        st = states.get(f"{ln['po']}|balance") or {}
-    return st
+    """The ledger record behind an auto line."""
+    return states.get(ledger_id(ln, states)) or {}
 
 
 def is_payment_record(st: dict) -> bool:
@@ -90,6 +96,13 @@ def build_payload() -> dict:
     states = L.all_line_states()
     auto, stats = P.auto_lines(cache, terms.get("payment_terms") or [], ov, calibration, states)
     L.archive_lines([ln for ln in auto if is_payment_record(effective_state(ln, states))])
+    # A planned request date recorded before plans kept their due date (or on a
+    # line that has just become a deposit) is anchored to today's due date.
+    dues = {}
+    for ln in auto:
+        lid = ledger_id(ln, states)
+        dues[lid] = (states.get(lid) or {}).get("due_date") or ln.get("due_auto")
+    L.backfill_plan_due(dues)
     archived = closed_archive(L.archived_snapshots(), auto, cache)
     stats["archived"] = len(archived)
     meta = cache.get("meta", {})
@@ -429,11 +442,17 @@ def xlsx_name(day: dt.date | None = None) -> str:
     return f"{TITLE} {day.strftime('%d-%m-%Y')}.xlsx"
 
 
-def main() -> int:
+def write_payload() -> dict:
+    """Rebuild the auto lines from the cache and the ledger (no Cin7 call)."""
     payload = build_payload()
-    tmp = PAYLOAD.with_suffix(".tmp")
+    tmp = PAYLOAD.with_suffix(f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
     tmp.replace(PAYLOAD)
+    return payload
+
+
+def main() -> int:
+    payload = write_payload()
     rows, when = merged(payload)
     meta = {**payload["meta"], **when, "_terms_table": payload["terms_table"],
             "_remarks": L.get_remarks()}

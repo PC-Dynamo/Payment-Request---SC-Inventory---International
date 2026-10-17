@@ -167,6 +167,7 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
     kinds: dict[str, set] = {}
     for ln in auto:
         kinds.setdefault(ln["po"], set()).add(ln["kind"])
+    due_by = {ln["line_id"]: ln.get("due_auto") for ln in auto}
     states: dict[str, dict] = {}          # line_id -> values (later rows win)
     charges: list[dict] = []
     # POs the workbook shows a deposit row for are paid in two parts, whatever
@@ -249,6 +250,8 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
                     v["status"] = None
                 if v["status"] in ("Paid", "Requested", None):
                     v["request_date"] = row["req"]
+                    if row["req"]:
+                        v["plan_due"] = due_by.get(lid)      # what the team planned against
                     if v["status"] == "Paid":
                         v["paid_date"] = row["paid"] or row["req"]
                     if amt and len(targets) == 1:
@@ -295,7 +298,8 @@ def backfill(states: dict, charges: list) -> int:
 
 
 SYNC_LINE_FIELDS = ("status", "request_date", "paid_date", "amount", "currency", "invoice_no",
-                    "comment", "vendor_entity", "acc_scheduled_date", "paid_amount", "finalised")
+                    "comment", "vendor_entity", "acc_scheduled_date", "paid_amount", "finalised",
+                    "plan_due")
 SYNC_MANUAL_FIELDS = ("status", "request_date", "paid_date", "due_date", "amount", "currency",
                       "doc_no", "comment", "acc_scheduled_date", "paid_amount", "vendor", "finalised")
 SEED_WHO = "seed: payment request workbook"
@@ -339,6 +343,10 @@ def sync(states: dict, charges: list, label: str) -> dict:
                 out["line_added"] += 1
                 continue
             diff = {f: x for f, x in vals.items() if x is not None and x != cur[f]}
+            if "request_date" not in diff and cur["plan_due"]:
+                # The same date in a newer workbook is not a new plan: if the PO
+                # has slipped since, the app keeps moving the date with it.
+                diff.pop("plan_due", None)
             if v.get("status", "-") is None and cur["status"]:
                 diff["status"] = None        # back to automatic: queued, not yet requested
             human = _human_fields(con, lid)

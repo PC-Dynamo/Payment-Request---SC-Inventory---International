@@ -127,6 +127,15 @@ def _ledger_id(line_id: str) -> str:
     return line_id
 
 
+def _due_now(line_id: str, changes: dict) -> str | None:
+    """The line's due date as it stands with these changes: what a request date
+    set now is planned against."""
+    ln = _auto_line(line_id) or {}
+    if "due_date" in changes:
+        return changes["due_date"] or ln.get("due_auto")
+    return L.stored(_ledger_id(line_id)).get("due_date") or ln.get("due_auto")
+
+
 @app.route("/api/line", methods=["POST"])
 def api_line():
     body = request.get_json(silent=True) or {}
@@ -134,6 +143,7 @@ def api_line():
     changes = body.get("changes") or {}
     if not isinstance(changes, dict):
         return _bad("changes must be an object")
+    changes.pop("plan_due", None)                # kept by the app, never typed
     today = dt.datetime.now(AWST).date()
     # Defaults only fill a date nobody has entered - never overwrite one.
     have = L.stored(line_id)
@@ -149,7 +159,18 @@ def api_line():
                 changes["vendor"] = changes.pop("vendor_entity")
             row = L.update_manual(int(line_id[1:]), changes, _who())
         elif _known_auto(line_id):
+            po_ref, _, kind = line_id.partition("|")
+            split = kind == "full" and P.deposit_pct_of(changes.get("pay_type")) is not None
+            if split:
+                # "Deposit 30%" typed on a single full payment: the PO is paid in
+                # two parts, so the record moves to its deposit line.
+                L.split_full_line(po_ref, _who())
+                line_id = f"{po_ref}|deposit"
+            if "request_date" in changes:
+                changes["plan_due"] = (_due_now(line_id, changes) or "") if changes["request_date"] else ""
             row = L.set_line_state(_ledger_id(line_id), changes, _who())
+            if split:
+                BR.write_payload()                   # the deposit + balance lines exist from now
             _archive_if_recorded(line_id)
         else:
             return _bad("unknown line", 404)
@@ -198,7 +219,7 @@ def api_submit():
         if r["source"] == "manual":
             L.update_manual(r["manual_id"], ch, who)
         else:
-            L.set_line_state(_ledger_id(r["line_id"]), ch, who)
+            L.set_line_state(_ledger_id(r["line_id"]), {**ch, "plan_due": r.get("due_date") or ""}, who)
             _archive_if_recorded(r["line_id"])
         done += 1
     return jsonify(ok=True, requested=done, request_date=when["next_request"],

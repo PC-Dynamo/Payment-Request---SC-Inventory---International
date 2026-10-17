@@ -6,6 +6,12 @@
    "anchor": "etd",
    "offset_days": -7,
    "rule": "25% deposit on PO date; 75% balance before shipment - 7 days before ETD (from the payment workbook: Watson has no terms in master-data)"
+  },
+  "Qingdao Great Century Plastic Co.,Ltd": {
+   "deposit_pct": 0,
+   "anchor": "order",
+   "offset_days": 0,
+   "rule": "100% T/T in advance - in the first pay run after the PO is raised; the team approves the PO in Cin7 when the PI is paid, so set a request date on a draft PO to request it (payment workbook, Aug-Oct 2026; master-data still says 50% deposit, 50% against B/L copy)"
   }
  },
  "term_aliases": {
@@ -29,7 +35,7 @@
   "Xiamen K-Life Sport Co., Ltd"
  ],
  "bulk_note": "K-Life: the deposit is paid on the bulk (China stock) order and allocated to the shipment POs. Kpower, Iron Master, Bodylonger and Imbell bulk orders need no payment.",
- "special_arrangements_note": "CSP's '30% deposit, 70% 14 days before arrival' arrangement was removed on 13 Oct 2026: CSP has taken no deposit since July 2026 (Idelyn, UAT). Its timing now follows the team's recent payment history like other suppliers.",
+ "special_arrangements_note": "CSP's '30% deposit, 70% 14 days before arrival' arrangement was removed on 13 Oct 2026: CSP has taken no deposit since July 2026 (Idelyn, UAT). Its timing now follows the team's recent payment history like other suppliers. Great Century added 17 Oct 2026 (UAT 16 Oct): remove it once master-data says '100% T/T in advance' - an in-advance term is not moved by payment history.",
  "pay_weekdays": {
   "USD": [
    1

@@ -281,8 +281,103 @@ def test_oct15():
           "Payment Status/Type follows the team's wording")
 
 
+def test_uat_16oct():
+    """Rules added after the 16 Oct 2026 UAT (Idelyn): slipped plans, draft POs paid
+    in advance, a deposit typed on a full payment."""
+    import seed_from_reference as SR
+    base = {"source": "auto", "po": "PO-80001", "po_list": ["PO-80001"], "vendor": "X", "state": "VIC",
+            "segment": "Retail", "currency": "USD", "flags": [], "assumed_paid": None, "kind": "full",
+            "line_id": "PO-80001|full", "amount_auto": 10.0, "due_auto": "2026-11-17"}
+    plan = {"request_date": "2026-10-20", "plan_due": "2026-10-20"}
+    rows, _ = P.merge([base], {"PO-80001|full": plan}, [], D("2026-10-17"), 4)
+    r = rows[0]
+    check(r["request_date"] == "2026-11-17" and r["replanned_from"] == "2026-10-20" and r["status"] == "Forecast",
+          "a planned date moves with the PO when its due date slips four weeks")
+    check(any("moved +28 days" in f for f in r["flags"]) and base["flags"] == [],
+          "the move is explained on the line (and the payload line is not touched)")
+    rows, _ = P.merge([dict(base, due_auto="2026-10-25")], {"PO-80001|full": plan}, [], D("2026-10-17"), 4)
+    check(rows[0]["request_date"] == "2026-10-20" and not rows[0].get("replanned_from"),
+          "a move of a week or less keeps the plan")
+    rows, _ = P.merge([base], {"PO-80001|full": dict(plan, plan_due=None)}, [], D("2026-10-17"), 4)
+    check(rows[0]["request_date"] == "2026-10-20", "a plan earlier than the due date on purpose stays")
+    rows, _ = P.merge([base], {"PO-80001|full": dict(plan, status="Requested")}, [], D("2026-10-17"), 4)
+    check(rows[0]["request_date"] == "2026-10-20", "a line already sent to Accounts keeps its date")
+
+    gc = {"Qingdao Great Century Plastic Co.,Ltd": {"deposit_pct": 0, "anchor": "order", "offset_days": 0,
+                                                    "rule": "100% T/T in advance"}}
+    terms = [{"supplier_name": "Qingdao Great Century Plastic Co.,Ltd", "terms": "50% Deposit, 50% balance "
+              "based on copy of B/L", "deposit_pct": "50", "basis": "B/L copy"}]
+    po = {"is_open": True, "stage_raw": "NEW", "is_approved": False, "po_date": "2026-10-10",
+          "supplier": "Qingdao Great Century Plastic Co.,Ltd ", "value_usd": 804.0, "usd_exact": True,
+          "ship": {}, "state": "NSW"}
+    lines, _ = P.auto_lines({"pos": {"PO-141290": po}}, terms, {"special_arrangements": gc}, {}, {})
+    check(len(lines) == 1 and lines[0]["kind"] == "full" and lines[0]["due_auto"] == "2026-10-10",
+          "Great Century: one payment, due on the PO date (paid in advance)")
+    rows, _ = P.merge(lines, {}, [], D("2026-10-17"), 4)
+    check(rows[0]["status"] == "Awaiting Approval", "a draft PO with nothing scheduled stays Awaiting Approval")
+    rows, _ = P.merge(lines, {"PO-141290|full": {"request_date": "2026-10-20", "amount": 804.0}}, [],
+                      D("2026-10-17"), 4)
+    check(rows[0]["status"] == "For Payment" and rows[0]["this_request"]
+          and any("draft PO" in f for f in rows[0]["flags"]),
+          "a request date set on a draft PO puts it in the pay run, flagged")
+    rows, _ = P.merge(lines, {"PO-141290|full": {"amount": 3102.4}}, [], D("2026-10-17"), 4)
+    check(rows[0]["status"] == "Awaiting Approval", "an amount alone does not schedule a draft PO")
+    rule = T.parse_terms({"terms": "100% T/T in advance", "basis": "Prepaid"})
+    check(P._calibrated(rule, {"anchor": "etd", "offset_days": -28, "n": 12})["balance_anchor"] == "order",
+          "payment history does not move an in-advance term")
+
+    check(P.deposit_pct_of("Deposit 30%") == 30 and P.deposit_pct_of("Deposit") == 0
+          and P.deposit_pct_of("Full payment 100%") is None, "deposit percentage read from a payment type")
+    hl = {"is_open": True, "stage_raw": "Production-Allocated", "is_approved": True, "po_date": "2026-10-15",
+          "supplier": "HEALTHLAND SAUNA EQUIPMENT CO.,LTD", "value_usd": 13312.0, "usd_exact": True,
+          "eta_cin7": "2027-01-20", "ship": {}, "state": "VIC"}
+    st = {"PO-142054|deposit": {"pay_type": "Deposit 30%", "amount": 4243.0, "request_date": "2026-10-20",
+                                "invoice_no": "HL261015-L-2"}}
+    lines, _ = P.auto_lines({"pos": {"PO-142054": hl}}, [], {}, {}, st)
+    by = {ln["kind"]: ln for ln in lines}
+    check(set(by) == {"deposit", "balance"} and by["deposit"]["pct"] == 30 and by["deposit"]["due_auto"] == "2026-10-21",
+          "a deposit typed on a full payment splits the PO; the deposit falls due after approval")
+    rows, _ = P.merge(lines, st, [], D("2026-10-17"), 4)
+    rb = {r["kind"]: r for r in rows}
+    check(rb["deposit"]["amount"] == 4243.0 and rb["deposit"]["this_request"]
+          and rb["balance"]["amount"] == 9069.0 and rb["balance"]["status"] == "Forecast",
+          "the balance is the PO value less the deposit, and is not lost")
+    lines, _ = P.auto_lines({"pos": {"PO-142054": hl}}, [], {}, {}, {"PO-142054|deposit": {"pay_type": "Deposit 30%"}})
+    check({ln["kind"] for ln in lines} == {"deposit", "balance"}, "the deposit type alone is enough to split")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        L.DB = Path(tmp) / "t.db"
+        L.set_line_state("PO-142054|full", {"pay_type": "Deposit 30%", "amount": 4243}, "rizqi@test")
+        check(L.split_full_line("PO-142054", "rizqi@test") and "PO-142054|full" not in L.all_line_states()
+              and L.all_line_states()["PO-142054|deposit"]["amount"] == 4243.0,
+              "the full line's record moves to the deposit line")
+        check(not L.split_full_line("PO-142054", "t"), "a PO split once is not split again")
+        with L.connect() as con:
+            human = SR._human_fields(con, "PO-142054|deposit")
+        check({"amount", "pay_type"} <= human, "the moved fields stay the person's (a sync keeps them)")
+        L.set_line_state("PO-9|balance", {"request_date": "2026-10-20"}, "seed: payment request workbook")
+        L.split_full_line("PO-9", "t")
+        check("PO-9|deposit" in L.all_line_states(), "the old balance record a full line reads moves too")
+        L.set_line_state("PO-8|full", {"request_date": "2026-10-20", "plan_due": "2026-10-21"}, "t")
+        L.set_line_state("PO-7|full", {"request_date": "2026-10-20"}, "t")
+        check(L.backfill_plan_due({"PO-8|full": "2026-12-01", "PO-7|full": "2026-10-22"}) == 1
+              and L.all_line_states()["PO-8|full"]["plan_due"] == "2026-10-21"
+              and L.all_line_states()["PO-7|full"]["plan_due"] == "2026-10-22",
+              "backfill gives a due date only to plans that have none")
+        L.set_line_state("PO-6|full", {"request_date": "2026-10-20", "plan_due": "2026-10-20"},
+                         "seed: payment request workbook")
+        SR.sync({"PO-6|full": {"request_date": "2026-10-20", "plan_due": "2026-11-17", "_row": 1}}, [], "t")
+        check(L.all_line_states()["PO-6|full"]["plan_due"] == "2026-10-20",
+              "the same date in a newer workbook does not re-anchor a plan")
+        SR.sync({"PO-6|full": {"request_date": "2026-11-17", "plan_due": "2026-11-17", "_row": 1}}, [], "t")
+        check(L.all_line_states()["PO-6|full"]["plan_due"] == "2026-11-17",
+              "a new date in the workbook is a new plan")
+    L.DB = HERE / "ledger.db"
+
+
 def main() -> int:
-    for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct, test_oct15, test_data):
+    for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
+               test_oct15, test_uat_16oct, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

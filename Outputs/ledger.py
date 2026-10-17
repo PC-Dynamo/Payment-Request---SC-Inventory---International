@@ -72,9 +72,11 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 """
 
+# plan_due is not typed by anyone: it is the line's due date at the moment its
+# request date was set, so the plan can follow the PO if it slips.
 LINE_FIELDS = ("status", "request_date", "paid_date", "due_date", "amount", "currency",
                "invoice_no", "comment", "pay_type", "vendor_entity", "acc_scheduled_date",
-               "paid_amount", "finalised")
+               "paid_amount", "finalised", "plan_due")
 MANUAL_FIELDS = ("entry_date", "vendor", "pay_type", "po_refs", "branch", "state", "segment",
                  "doc_no", "currency", "amount", "due_date", "request_date", "status",
                  "paid_date", "comment", "acc_scheduled_date", "paid_amount", "finalised")
@@ -83,7 +85,8 @@ MANUAL_FIELDS = ("entry_date", "vendor", "pay_type", "po_refs", "branch", "state
 # table, so every new column must also be listed here.
 MIGRATIONS = {
     "line_state": {"pay_type": "TEXT", "vendor_entity": "TEXT",
-                   "acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER"},
+                   "acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER",
+                   "plan_due": "TEXT"},
     "manual_line": {"acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER"},
 }
 
@@ -130,7 +133,7 @@ def _amount(v) -> float | None:
 
 def clean(field: str, value):
     """Validate one user-supplied value. Raises ValueError with a readable message."""
-    if field in ("request_date", "paid_date", "due_date", "entry_date", "acc_scheduled_date"):
+    if field in ("request_date", "paid_date", "due_date", "entry_date", "acc_scheduled_date", "plan_due"):
         try:
             return _date(value)
         except ValueError:
@@ -281,6 +284,45 @@ def set_line_state(line_id: str, changes: dict, who: str) -> dict:
                     f"VALUES ({','.join('?' * len(cols))})", [row.get(c) for c in cols])
         _audit(con, who, "edit line", line_id, {"before": before, "after": vals})
     return row
+
+
+def split_full_line(po_ref: str, who: str) -> bool:
+    """Someone typed a deposit as the payment type of a PO's single "full"
+    payment: from now on the PO is paid in two parts. Its record moves to the
+    deposit line; the balance line follows from the terms, less the deposit.
+    False if the PO already has a deposit record (nothing to move)."""
+    dst = f"{po_ref}|deposit"
+    with connect() as con:
+        if con.execute("SELECT 1 FROM line_state WHERE line_id = ?", (dst,)).fetchone():
+            return False
+        cur = None
+        for kind in ("full", "balance"):     # the full line's record, or the old balance record it reads
+            cur = con.execute("SELECT * FROM line_state WHERE line_id = ?", (f"{po_ref}|{kind}",)).fetchone()
+            if cur:
+                break
+        src = cur["line_id"] if cur else f"{po_ref}|full"
+        moved = {}
+        if cur:
+            moved = {f: cur[f] for f in LINE_FIELDS if cur[f] not in (None, "")}
+            con.execute("UPDATE line_state SET line_id = ? WHERE line_id = ?", (dst, src))
+        # Logged on the deposit line, so the fields stay the person's (a workbook
+        # sync never overwrites them).
+        _audit(con, who, "split full payment -> deposit + balance", dst, {"from": src, "after": moved})
+    return True
+
+
+def backfill_plan_due(dues: dict[str, str | None]) -> int:
+    """Give every planned request date that has no plan_due one: the line's due
+    date now. `dues` maps a ledger line id to that line's current due date."""
+    n = 0
+    with connect() as con:
+        for r in con.execute("SELECT line_id FROM line_state WHERE request_date IS NOT NULL "
+                             "AND plan_due IS NULL").fetchall():
+            due = dues.get(r["line_id"])
+            if due:
+                con.execute("UPDATE line_state SET plan_due = ? WHERE line_id = ?", (due, r["line_id"]))
+                n += 1
+    return n
 
 
 def add_manual(data: dict, who: str, seed_key: str | None = None) -> int | None:

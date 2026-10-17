@@ -22,6 +22,14 @@ Live: <https://sc.dynamofitness.au/Applications/payment-request/>
 - People set status (For Payment → Requested → Paid, On Hold, Not Payable),
   paid date, invoice number, amount or due date. Every edit is logged with the
   signed-in address. “Mark selected as Requested” submits a batch.
+- **A planned request date follows the PO**: a date set by hand (or brought in
+  from the team's workbook) moves with the due date when the PO slips, or comes
+  forward, by more than a week (⇢). A line already Requested keeps its date.
+- **Draft POs** (New, not approved in Cin7) are listed as Awaiting Approval and
+  requested only once someone sets a request date: Great Century's PI is paid in
+  advance and the PO approved in Cin7 when it is paid.
+- **A deposit typed on a full payment** (“Deposit 30%” as the payment type)
+  splits the PO into that deposit and a balance of the PO value less it.
 - One white page: KPIs, four charts and the table, all filtered by
   **State (All / NSW / VIC / QLD / WA / SA)** and **Channel (All / Retail /
   Commercial)**, over *This request / 4-week rolling / All unpaid / All*.
@@ -50,6 +58,12 @@ Live: <https://sc.dynamofitness.au/Applications/payment-request/>
 | Payment terms | SC Master Data cache `/srv/team/sc/master-data` | **weekly** (Monday run) |
 | Branch → state, SKU → Retail/Commercial, supplier → Local/International | *Supplier and Branch Info.xlsx* (OneDrive / SharePoint) | every run; forced re-read when a new SKU or supplier cannot be identified |
 | Status, paid dates, manual lines | `Outputs/ledger.db` (SQLite), people's edits | live |
+
+The team's payment workbook is **not** read on a schedule.
+`seed_from_reference.py` imports it on request (25 Sep, 5 Oct and 13 Oct 2026
+so far) to bring in payments already made or planned; an import is a snapshot,
+and anything changed only in the workbook afterwards reaches the app only at the
+next import. Once the team works in the app, the app is the record.
 
 Cin7 holds international POs in landed AUD. The supplier is paid FOB USD, so
 USD is rebuilt from `costUSD`. Checked against 604 POs in the team's payment

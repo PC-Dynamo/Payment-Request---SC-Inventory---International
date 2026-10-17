@@ -44,6 +44,12 @@ DEPOSIT_ASSUME_DAYS = 21
 # Below this share of recent POs with a deposit, a supplier is treated as
 # "full payment" by default (UAT 6 Oct 2026: Kpower 33%, Great Century 0%).
 DEPOSIT_RATE_MIN = 0.5
+# A request date someone planned (in the app or the team's workbook) was set
+# against the due date of that day. When the PO slips by more than a week -
+# its ETA moved in Cin7 or the forwarder report - the plan moves with it
+# (UAT 16 Oct 2026: PO-135508 / PO-119793 kept 20 Oct after their ETA moved
+# four weeks; the team moved them to 17 Nov).
+REPLAN_MIN_DAYS = 7
 
 
 def _d(s) -> dt.date | None:
@@ -125,7 +131,9 @@ def _calibrated(rule: dict, cal: dict | None) -> dict:
     elif rate is not None and rate >= DEPOSIT_RATE_MIN and not rule["deposit_pct"] and cal.get("deposit_pct"):
         rule["deposit_pct"] = float(cal["deposit_pct"])
         notes.append(f"{cal['deposit_pct']:g}% deposit - taken on {rate:.0%} of {cal.get('deposit_pos')} recent POs")
-    if cal.get("anchor") and cal.get("n", 0) >= 5:
+    # Paid in advance on the PO date: there is no shipping date to measure the
+    # team's habit against, so history does not move it.
+    if cal.get("anchor") and cal.get("n", 0) >= 5 and rule["balance_anchor"] != "order":
         off = int(cal["offset_days"])
         where = "ETD" if cal["anchor"] == "etd" else "forwarder ETA"
         rule["balance_anchor"], rule["balance_offset"] = cal["anchor"], off
@@ -146,6 +154,17 @@ def _evidence(st: dict) -> bool:
                 or st.get("invoice_no") or st.get("request_date"))
 
 
+def deposit_pct_of(pay_type) -> float | None:
+    """'Deposit 30%' -> 30.0; 0.0 for a deposit with no percentage; None if the
+    payment type is not a deposit at all."""
+    text = str(pay_type or "")
+    if "deposit" not in text.lower():
+        return None
+    m = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
+    pct = float(m.group(1)) if m else 0.0
+    return pct if 0 < pct < 100 else 0.0
+
+
 def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
                calibration: dict | None = None, states: dict | None = None) -> tuple[list[dict], dict]:
     book = T.TermsBook(terms_rows, overrides.get("term_aliases"))
@@ -154,9 +173,11 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
     # deposit/balance keeps two lines, a recorded full payment keeps one.
     recorded: dict[str, set] = {}
     for lid, st in (states or {}).items():
-        if not _evidence(st):
-            continue          # e.g. only the "Final" box ticked: says nothing about the split
         po_ref, _, kind = lid.partition("|")
+        # A deposit line someone typed as "Deposit x%" (relabelling a full
+        # payment - Healthland, UAT 16 Oct) is a deposit even with nothing else on it.
+        if not _evidence(st) and not (kind == "deposit" and deposit_pct_of(st.get("pay_type")) is not None):
+            continue          # e.g. only the "Final" box ticked: says nothing about the split
         recorded.setdefault(po_ref, set()).add(kind)
     special = {M._key(k): v for k, v in (overrides.get("special_arrangements") or {}).items()}
     transit = overrides.get("transit_weeks") or {}
@@ -288,8 +309,9 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             # supplier's default, and a stale "full" record from an earlier sync
             # does not undo that. A balance alone proves nothing - the 25 Sep
             # seed filed plain "For Payment" rows under "balance".
-            if not dep:
-                dep = float(T.parse_terms(trow, sp)["deposit_pct"]
+            typed = deposit_pct_of(((states or {}).get(f"{ref}|deposit") or {}).get("pay_type"))
+            if typed or not dep:
+                dep = float(typed or T.parse_terms(trow, sp)["deposit_pct"]
                             or (cal_by.get(M._key(po["supplier"])) or {}).get("deposit_pct") or 30)
                 base["terms_rule"] = (f"{dep:g}% deposit recorded for this PO; {100 - dep:g}% balance"
                                       + (" - " + rule["rule"].split(" - ", 1)[1] if " - " in rule["rule"] else ""))
@@ -348,6 +370,26 @@ def _po_context(auto: list[dict]) -> dict[str, dict]:
     return ctx
 
 
+def replanned(row: dict, st: dict, due: dt.date | None, today: dt.date,
+              pay_weekdays: dict | None = None) -> dict:
+    """The record with its planned request date moved by as much as the due date
+    has moved since the plan was made (`plan_due`), if that is more than a week.
+    A line already sent to Accounts, paid or written off keeps its date."""
+    req, base = _d(st.get("request_date")), _d(st.get("plan_due"))
+    if not (req and base and due) or st.get("status") in ("Requested", "Paid", "Not Payable"):
+        return st
+    shift = (due - base).days
+    if abs(shift) <= REPLAN_MIN_DAYS:
+        return st
+    new = request_day_for(req + dt.timedelta(days=shift), today,
+                          weekdays_for(row.get("currency"), pay_weekdays))
+    row["replanned_from"] = _s(req)
+    row["flags"] = [*(row.get("flags") or []),
+                    f"request date moved from {req:%d/%m} to {new:%d/%m}: the due date moved "
+                    f"{shift:+d} days after the request date was planned"]
+    return {**st, "request_date": _s(new)}
+
+
 def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
           today: dt.date, forecast_weeks: int = 4, po_index: dict | None = None,
           branch_state: dict | None = None,
@@ -364,7 +406,14 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
         req = _d(st.get("request_date"))
         status = st.get("status")
         if not status and row.get("awaiting_approval"):
-            status = "Awaiting Approval"
+            if req is None:
+                status = "Awaiting Approval"
+            else:
+                # Scheduled by hand on a draft PO: Great Century's PI is paid in
+                # advance and the PO approved in Cin7 when it is paid (UAT 16 Oct).
+                row["flags"] = [*(row.get("flags") or []),
+                                "draft PO in Cin7 (not approved yet) - in the pay run because a "
+                                "request date was set; approve it when paying"]
         if not status:
             if row.get("assumed_paid"):
                 status = "Paid"
@@ -448,7 +497,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
         row["paid_amount"] = st.get("paid_amount")
         due = _d(st.get("due_date")) or _d(ln["due_auto"])
         row["due_overridden"] = bool(st.get("due_date"))
-        out.append(finish(row, due, st))
+        out.append(finish(row, due, replanned(row, st, due, today, pay_weekdays)))
 
     ctx = {**(po_index or {}), **_po_context(auto)}
     bstate = {M._key(k): v for k, v in (branch_state or {}).items()}
