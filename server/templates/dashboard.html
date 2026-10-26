@@ -106,6 +106,8 @@ table.reg{border-collapse:separate;border-spacing:0;width:100%;min-width:1480px;
 .st-AwaitingApproval{background:#f1f3f7;color:#7b6aa8;font-style:italic}
 .st-NotPayable{background:#f1f3f7;color:#98a1b0;text-decoration:line-through}
 .icon{border:0;background:none;padding:0 4px;color:var(--muted)}
+.mini{border:1px solid var(--line);background:#fff;border-radius:4px;padding:0 4px;font-size:10.5px;line-height:16px;color:var(--muted);cursor:pointer}
+.mini:hover{color:inherit;border-color:var(--muted)}
 .icon:hover{color:var(--accent)}
 .note{font-size:11.5px;color:var(--muted);margin:6px 2px 0}
 /* analysis tab */
@@ -208,7 +210,7 @@ dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
     <section>
       <div class="totals" id="totals"></div>
       <div class="tscroll"><table class="reg" id="tbl"><colgroup id="cols"></colgroup><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
-      <div class="note"><span class="rv">BULK</span> / <span class="rv">CHECK</span> purple rows need a review: K-Life bulk-order deposit, or a deposit that may already be paid on the bulk order.<br>Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount). ✎ opens every field.
+      <div class="note"><span class="rv">BULK</span> / <span class="rv">CHECK</span> purple rows need a review: K-Life bulk-order deposit, or a deposit that may already be paid on the bulk order.<br>Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount, paid currency, paid amount in AUD). ✎ opens every field; on a deposit, <b>Balance</b> opens the PO's balance line; on a line added by hand, <b>Copy</b> starts a new line from it.
         <label style="margin-left:14px">Group by <select id="fGroup"><option value="date">Request date</option><option value="payee">Payee</option><option value="date_payee">Request date + payee</option><option value="">None</option></select></label>
         <button id="bSubmit" disabled style="margin-left:10px">Mark selected as Requested</button></div>
     </section>
@@ -348,9 +350,10 @@ function passBase(r){  // every filter except the Show window (KPI cards are win
   if(F.q&&![r.po,r.vendor_entity,r.supplier,r.invoice_no,r.branch,r.pay_type,r.comment,r.container].join(" ").toLowerCase().includes(F.q.toLowerCase()))return false;
   return true;
 }
-// Picking a status means "find those lines": it searches every line rather than
-// only the Show window (UAT: "Paid" returned nothing inside the 4-week view).
-const rowsF=()=>DATA.filter(r=>passBase(r)&&(F.status?true:inWin(r)));
+// Picking a status or typing a search means "find those lines": it searches every
+// line rather than only the Show window (UAT: "Paid" returned nothing inside the
+// 4-week view; a PO search showed its deposit but not its later balance).
+const rowsF=()=>DATA.filter(r=>passBase(r)&&(F.status||F.q?true:inWin(r)));
 function activeFilterCount(){return ["payee","fin","state","seg","cur","sup","stage","status","type","q","reqF","reqT","etdF","etdT","etaF","etaT","accF","accT"].filter(x=>F[x]).length}
 
 // ------------------------------------------------------------------ KPIs + totals
@@ -376,14 +379,16 @@ function renderKpis(){
 function renderTotals(rows){
   const parts=CURS.map(c=>[c,sum(rows,c)]).filter(([c,v])=>v||c==="USD"||c==="AUD");
   const paid=CURS.map(c=>[c,sum(rows,c,"paid_amount")]).filter(x=>x[1]);
+  const paidAud=rows.reduce((a,r)=>a+(+r.paid_amount_aud||0),0);
   const n=activeFilterCount();
   $("#totals").innerHTML=`<span>${n?`<b>${n}</b> filter${n>1?"s":""} ·`:""} <b>${rows.length}</b> lines</span>`+
     parts.map(([c,v])=>`<span>${c} <b>${money(v)}</b></span>`).join("")+
     (paid.length?`<span class="muted">Paid amount: ${paid.map(([c,v])=>`${c} ${money(v)}`).join(" · ")}</span>`:"")+
+    (paidAud?`<span class="muted">Paid in AUD: ${money(paidAud)}</span>`:"")+
     ["Supplier","Forwarder","Other"].map(p=>{const pr=rows.filter(r=>r.payee===p);if(!pr.length)return "";
       return `<span class="muted">${p==="Supplier"?"Supplier":p==="Forwarder"?"Forwarder/broker":"Other"}: `+CURS.map(c=>[c,sum(pr,c)]).filter(x=>x[1]).map(([c,v])=>`${c} ${money(v)}`).join(" · ")+`</span>`}).join("")+
     (rows.some(r=>r.not_final)?`<span style="background:#fce4d6;border-radius:4px;padding:0 6px">${rows.filter(r=>r.not_final).length} not finalised</span>`:"")+
-    `<span class="sp"></span><span class="muted">${esc(F.status?`Status "${F.status}" — all lines searched`:winLabel())}</span>`;
+    `<span class="sp"></span><span class="muted">${esc(F.status?`Status "${F.status}" — all lines searched`:F.q?`Search "${F.q}" — all lines searched`:winLabel())}</span>`;
   $("#fCount").textContent=n?`${n} filter${n>1?"s":""} active`:"";
 }
 const winLabel=()=>({request:`Next pay run (USD ${dd(META.next_request)} · AUD ${dd(META.next_request_aud)})`,window:`${META.forecast_weeks}-week rolling to ${dd(META.horizon)}`,open:"All unpaid",all:"All lines incl. paid"})[F.win];
@@ -417,10 +422,12 @@ const ALLCOLS=[   // [key, header, width weight (px at ~1700 wide), kind, editab
   ["EUR","Value (EUR)",56,"money","amount"],
   ["paid_date","Paid Date",58,"date","paid_date"],
   ["paid_amount","Paid Amount",66,"money","paid_amount"],
+  ["paid_currency","Paid Currency",44,"pcur","paid_currency"],
+  ["paid_amount_aud","Paid Amount (AUD)",68,"money","paid_amount_aud"],
   ["comment","Comment",104,"text","comment"],
   ["container_number","Container Number",70,"text"],
   ["pct","%",28],
-  ["edit","",20],
+  ["edit","",40],
 ];
 let COLS=ALLCOLS;
 function cin7Link(r){
@@ -446,16 +453,24 @@ function cell(r,c){
     case "USD":case "AUD":case "GBP":case "EUR":
       return r.currency===key?money(r.amount)+(r.source==="auto"&&!r.amount_overridden&&!r.usd_exact&&key==="USD"?' <span class="muted" title="estimated USD - enter the invoice amount">~</span>':""):"";
     case "paid_amount": return money(r.paid_amount);
+    case "paid_currency": return r.paid_currency?`<span class="${r.paid_currency_default?"muted":""}" title="${r.paid_currency_default?"the line's currency - pick another if it was paid in a different one":""}">${esc(r.paid_currency)}</span>`:"";
+    case "paid_amount_aud": return r.paid_amount_aud!=null?`<span class="${r.paid_aud_default?"muted":""}" title="${r.paid_aud_default?"paid in AUD":""}">${money(r.paid_amount_aud)}</span>`:"";
     case "pct": return r.pct!=null?fmt(r.pct,0)+"%":"";
     case "finalised": return ["Paid","Not Payable"].includes(r.status)?"":
       `<input type="checkbox" class="fin" data-id="${esc(r.line_id)}" ${r.finalised?"checked":""} title="PI / amount confirmed (untick = peach, not finalised)">`;
-    case "edit": return `<button class="icon ed" data-id="${esc(r.line_id)}" title="All fields / details">✎</button>`;
+    case "edit": {
+      // Rizqi (26 Oct): from a deposit, go straight to settling the balance.
+      const bal=r.source==="auto"&&r.kind==="deposit"&&DATA.some(x=>x.line_id===`${r.po}|balance`);
+      return `<button class="icon ed" data-id="${esc(r.line_id)}" title="All fields / details">✎</button>`+
+        (bal?`<button class="mini bal" data-po="${esc(r.po)}" title="Open this PO's balance line to settle the balance">Balance</button>`:
+         r.source==="manual"?`<button class="mini dup" data-id="${esc(r.line_id)}" title="Start a new line from this one">Copy</button>`:"");
+    }
     default: return c[3]==="date"?esc(dd(r[key])):esc(r[key]);
   }
 }
 function sortVal(r,key){
   if(CURS.includes(key))return r.currency===key?+r.amount:-Infinity;
-  if(key==="paid_amount"||key==="pct")return r[key]==null?-Infinity:+r[key];
+  if(key==="paid_amount"||key==="paid_amount_aud"||key==="pct")return r[key]==null?-Infinity:+r[key];
   if(key==="status")return statusLabel(r);
   return r[key]??"";
 }
@@ -492,6 +507,7 @@ function renderTable(){
     if(c[0]==="entry_date")return `<td colspan="1">Total</td>`;
     if(CURS.includes(c[0]))return `<td class="num">${money(sum(rows,c[0]))}</td>`;
     if(c[0]==="paid_amount")return `<td class="num">${money(rows.reduce((a,r)=>a+(+r.paid_amount||0),0))}</td>`;
+    if(c[0]==="paid_amount_aud")return `<td class="num">${money(rows.reduce((a,r)=>a+(+r.paid_amount_aud||0),0))}</td>`;
     if(c[0]==="vendor_entity")return `<td>${rows.length} lines</td>`;
     return "<td></td>"}).join("")+"</tr>";
   renderTotals(rows);updSubmit();
@@ -502,8 +518,23 @@ $("#tbl").addEventListener("click",e=>{
   if(th&&th.dataset.k&&!["sel","edit"].includes(th.dataset.k)){const kk=th.dataset.k;if(sortKey===kk){sortDir=-sortDir;if(sortDir>0)sortKey=null}else{sortKey=kk;sortDir=1}renderTable();return}
   const ed=e.target.closest(".ed");if(ed&&ed.tagName==="BUTTON"){openLine(ed.dataset.id);return}
   const b=e.target.closest("button.ed");if(b){openLine(b.dataset.id);return}
+  const bal=e.target.closest("button.bal");if(bal){openBalance(bal.dataset.po);return}
+  const dup=e.target.closest("button.dup");if(dup){copyLine(dup.dataset.id);return}
   const td=e.target.closest("td.ed");if(td&&!td.querySelector("input,select")&&!e.target.closest("a"))startEdit(td);
 });
+function openBalance(po){
+  // The balance usually falls due months after the deposit, outside the window
+  // being viewed: search the PO so both lines show, then open the balance.
+  F.q=po;$("#fQ").value=po;render();
+  openLine(`${po}|balance`);
+}
+function copyLine(id){
+  const r=DATA.find(x=>x.line_id===id);if(!r)return;CUR={mode:"new"};
+  const seed={...r,invoice_no:"",comment:"",due_date:"",request_stored:"",status_stored:"",acc_scheduled_date:"",
+    paid_date:"",paid_amount:null,paid_currency:"",paid_currency_default:false,paid_amount_aud:null,paid_aud_default:false};
+  openDrawer(`New line from ${r.po||"a manual line"} — ${r.pay_type}`,manualForm(seed),false);
+  const t=$("#dBody select[name=pay_type]"),c=$("#dBody select[name=currency]");t.onchange=()=>{if(META.charge_types[t.value])c.value=META.charge_types[t.value]};
+}
 $("#tbl").addEventListener("change",async e=>{
   if(e.target.classList.contains("sel")){e.target.checked?selected.add(e.target.dataset.id):selected.delete(e.target.dataset.id);updSubmit();return}
   if(e.target.classList.contains("fin")){
@@ -520,9 +551,13 @@ function startEdit(td){
   let v=f==="amount"?r.amount:(f==="status"?(r.status_stored||""):r[f]);
   if(f==="request_date")v=r.request_stored||r.request_date||"";
   if(f==="due_date")v=r.due_date||"";
+  if(f==="paid_currency")v=r.paid_currency_default?"":(r.paid_currency||"");
+  if(f==="paid_amount_aud")v=r.paid_aud_default?"":r.paid_amount_aud;
   let ctl;
   if(kind==="status"){
     ctl=`<select>${["","For Payment","Requested","Paid","On Hold","Not Payable"].map(o=>`<option value="${o}" ${o===v?"selected":""}>${o||"(automatic)"}</option>`).join("")}</select>`;
+  }else if(kind==="pcur"){
+    ctl=`<select>${["",...(META.paid_currencies||[])].map(o=>`<option value="${o}" ${o===v?"selected":""}>${o||"(line currency)"}</option>`).join("")}</select>`;
   }else if(kind==="select"){
     ctl=`<select>${payTypes().map(o=>`<option ${o===v?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
   }else if(kind==="date"){ctl=`<input type="date" value="${esc(v||"")}">`}
@@ -593,6 +628,8 @@ function openLine(id){
       ${field("acc_scheduled_date","Accounts scheduled payment date",r.acc_scheduled_date,"date")}
       ${field("paid_date","Paid date",r.paid_date,"date")}
       ${field("paid_amount","Paid amount",r.paid_amount,"number")}
+      ${field("paid_currency","Paid currency (blank = line currency)",r.paid_currency_default?"":r.paid_currency,"",["",...(META.paid_currencies||[])])}
+      ${field("paid_amount_aud","Paid amount (AUD)",r.paid_aud_default?"":r.paid_amount_aud,"number")}
       ${field("comment","Comment",r.comment,"textarea")}</div>`:manualForm(r);
   openDrawer(`${r.po||"Manual line"} — ${r.pay_type}`,facts+form,r.source==="manual");
 }
@@ -611,6 +648,8 @@ function manualForm(r){
     ${field("status","Status (blank = automatic)",r.status_stored||"","",ST)}
     ${field("paid_date","Paid date",r.paid_date,"date")}
     ${field("paid_amount","Paid amount",r.paid_amount,"number")}
+    ${field("paid_currency","Paid currency (blank = line currency)",r.paid_currency_default?"":r.paid_currency,"",["",...(META.paid_currencies||[])])}
+    ${field("paid_amount_aud","Paid amount (AUD)",r.paid_aud_default?"":r.paid_amount_aud,"number")}
     ${field("state","State (blank = from PO)",r.source==="manual"?r.state:"","",["",...META.states])}
     ${field("segment","Channel (blank = from PO)",r.source==="manual"?r.segment:"","",["","Retail","Commercial"])}
     ${field("branch","Branch (blank = from PO)",r.source==="manual"?r.branch:"","text",null,true)}
@@ -686,8 +725,9 @@ function renderNotes(){
     `<b>USD</b>: Cin7 holds POs in landed AUD, so USD = qty × Cin7 costUSD, pinned per PO line when first seen. Values marked ~ are estimated — enter the invoice amount to override.`,
     `<b>When a payment is requested</b>: percentages come from master-data terms; whether a deposit is taken and how many days before ETD / forwarder ETA the balance is requested follow the team's own payment history (${esc(m.calibration&&m.calibration.source||"payment workbook")}). Each line's rule is shown in ✎.`,
     `<b>Awaiting Approval</b>: New POs not yet approved in Cin7 are drafts — listed, not requested until someone sets a payment request date (Great Century's PI is paid in advance and the PO approved when it is paid). A deposit is requested ${"6"} days after approval.`,
-    `<b>Planned request dates follow the PO</b>: a request date set by hand or brought in from the team's workbook moves with the due date when the PO slips (or comes forward) by more than a week (⇢). A line already Requested keeps its date.`,
-    `<b>Deposit on a full payment</b>: choosing a "Deposit …%" payment type on a line the app had as one full payment splits the PO into the deposit and a balance (PO value less the deposit).`,
+    `<b>Planned request dates follow the PO</b>: a request date set by hand or brought in from the team's workbook moves later with the due date when the PO slips by more than a week (⇢); if the PO comes forward, the line is flagged instead. Deposits and in-advance payments keep their date, and so does a line already Requested.`,
+    `<b>Deposit on a full payment</b>: choosing a "Deposit …%" payment type on a line the app had as one full payment splits the PO into the deposit and a balance (PO value less the deposit). <b>Balance</b> on a deposit opens that balance line.`,
+    `<b>Paid currency / Paid amount (AUD)</b> (Accounts): the currency a payment went out in (AUD, USD, EUR, GBP, CNY; blank = the line's currency) and what it cost in AUD for the financial report. A payment made in AUD fills the AUD column by itself.`,
     `<b>Peach rows</b> = not finalised yet (PI / amount still to confirm), as in the team's Excel. A line counts as finalised once its PI amount or invoice no. is entered, or when the Final box is ticked. The app estimates USD from Cin7 costs - the supplier's PI amount always has to be entered by hand.`,
     `<b>Payee</b>: Supplier (factory) = PO payments; Forwarder / broker = freight, customs, GST, duty, cartage (Mainfreight, Ice Cargo); Other = e.g. inspections.`,
     `<b>Paid (assumed)</b>: deposits of approved POs older than 3 weeks or on the water, and pre-shipment payments of POs on the water, until someone records otherwise.`,
@@ -741,7 +781,7 @@ function renderSpecRules(){
       <li><b>Pay runs</b>: Tuesday for supplier payments and USD freight; Thursday for AUD charges. A line still unpaid after its run moves to the next one (↻).</li>
       <li><b>K-Life bulk orders</b>: the deposit is requested on the bulk (China stock) order (purple, BULK); deposits on K-Life shipment POs are flagged CHECK.</li>
       <li><b>New POs not yet approved in Cin7</b> are listed as Awaiting Approval and requested only once someone sets a payment request date.</li>
-      <li><b>Planned request dates</b> move with the due date when a PO slips by more than a week (⇢).</li>
+      <li><b>Planned request dates</b> move later with the due date when a PO slips by more than a week (⇢); a PO that comes forward is flagged, not moved. Deposits keep their date.</li>
       ${sp}</ul>
     <table class="rules"><tr><th>Supplier</th><th>Rule the app applies</th><th>Based on</th><th>Lines</th></tr>${rows||'<tr><td colspan="4" class="muted">No open lines.</td></tr>'}</table>`;
 }

@@ -26,6 +26,9 @@ AWST = dt.timezone(dt.timedelta(hours=8))
 
 STATUSES = ["For Payment", "Requested", "Paid", "On Hold", "Not Payable"]
 CURRENCIES = ["USD", "AUD", "GBP", "EUR"]
+# What a payment actually went out in (Accounts, 26 Oct 2026). Accounts also
+# records the AUD it cost, for the company's financial report.
+PAID_CURRENCIES = ["AUD", "USD", "EUR", "GBP", "CNY"]
 CHARGE_TYPES = {                       # type -> default currency
     "Freight Payment": "USD",
     "Customs Brokerage": "AUD",
@@ -76,18 +79,20 @@ CREATE TABLE IF NOT EXISTS audit (
 # request date was set, so the plan can follow the PO if it slips.
 LINE_FIELDS = ("status", "request_date", "paid_date", "due_date", "amount", "currency",
                "invoice_no", "comment", "pay_type", "vendor_entity", "acc_scheduled_date",
-               "paid_amount", "finalised", "plan_due")
+               "paid_amount", "finalised", "plan_due", "paid_currency", "paid_amount_aud")
 MANUAL_FIELDS = ("entry_date", "vendor", "pay_type", "po_refs", "branch", "state", "segment",
                  "doc_no", "currency", "amount", "due_date", "request_date", "status",
-                 "paid_date", "comment", "acc_scheduled_date", "paid_amount", "finalised")
+                 "paid_date", "comment", "acc_scheduled_date", "paid_amount", "finalised",
+                 "paid_currency", "paid_amount_aud")
 
 # Columns added after release. CREATE TABLE IF NOT EXISTS never alters a live
 # table, so every new column must also be listed here.
 MIGRATIONS = {
     "line_state": {"pay_type": "TEXT", "vendor_entity": "TEXT",
                    "acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER",
-                   "plan_due": "TEXT"},
-    "manual_line": {"acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER"},
+                   "plan_due": "TEXT", "paid_currency": "TEXT", "paid_amount_aud": "REAL"},
+    "manual_line": {"acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER",
+                    "paid_currency": "TEXT", "paid_amount_aud": "REAL"},
 }
 
 
@@ -138,11 +143,16 @@ def clean(field: str, value):
             return _date(value)
         except ValueError:
             raise ValueError(f"{field.replace('_', ' ')} must be a date (YYYY-MM-DD)")
-    if field in ("amount", "paid_amount"):
+    if field in ("amount", "paid_amount", "paid_amount_aud"):
         try:
             return _amount(value)
         except ValueError:
-            raise ValueError(f"{field.replace('_', ' ')} must be a number")
+            raise ValueError(f"{field.replace('_', ' ').replace(' aud', ' (AUD)')} must be a number")
+    if field == "paid_currency":
+        v = (value or "").strip().upper()
+        if v and v not in PAID_CURRENCIES:
+            raise ValueError(f"paid currency must be one of {', '.join(PAID_CURRENCIES)}")
+        return v or None
     if field == "finalised":
         # "Finalised" = the PI / invoice amount is confirmed (the team's Excel
         # leaves such rows white; unconfirmed ones are peach). Blank = automatic.

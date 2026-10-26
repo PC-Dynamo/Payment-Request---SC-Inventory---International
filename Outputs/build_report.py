@@ -134,6 +134,7 @@ def build_payload() -> dict:
             "states": STATES,
             "statuses": L.STATUSES,
             "currencies": L.CURRENCIES,
+            "paid_currencies": L.PAID_CURRENCIES,
             "charge_types": L.CHARGE_TYPES,
         },
         "auto_lines": auto,
@@ -216,6 +217,8 @@ COLUMNS = [       # the team's payment request register, in its column order
     ("Value (EUR)", "_eur", 12, "money"),
     ("Paid Date", "paid_date", 11, "date"),
     ("Paid Amount", "paid_amount", 13, "money"),
+    ("Paid Currency", "paid_currency", 9, None),
+    ("Paid Amount (AUD)", "paid_amount_aud", 13, "money"),
     ("Comment", "comment", 34, None),
     ("Container Number", "container_number", 16, None),
     ("%", "pct", 6, None),
@@ -242,6 +245,9 @@ TEAM_COLUMNS = [
     (" Value (EUR) ", "_eur", "money"), ("Paid Date", "paid_date", "date"),
     ("Paid Amount", "paid_amount", "money"), ("Comment", "comment", None),
     ("Container Number", "container_number", None), ("%", "_pct", "pct"),
+    # Added for Accounts (26 Oct 2026) after the team's columns, so a report
+    # reading the workbook's columns by position is not shifted.
+    ("Paid Currency", "paid_currency", None), ("Paid Amount (AUD)", "paid_amount_aud", "money"),
 ]
 
 
@@ -300,7 +306,7 @@ def _sheet_team_register(ws, rows: list[dict]) -> None:
     for i, (label, _, _) in enumerate(TEAM_COLUMNS, 1):
         c = ws.cell(row=1, column=i, value=label)
         c.font = Font(bold=True)
-    widths = (11, 30, 26, 14, 18, 22, 16, 11, 11, 11, 10, 22, 12, 11, 13, 13, 13, 12, 12, 11, 13, 34, 16, 6)
+    widths = (11, 30, 26, 14, 18, 22, 16, 11, 11, 11, 10, 22, 12, 11, 13, 13, 13, 12, 12, 11, 13, 34, 16, 6, 9, 13)
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     for r, row in enumerate(rows, 2):
@@ -402,7 +408,7 @@ def _sheet_app_register(ws, rows: list[dict], meta: dict, subtitle: str = "") ->
         ws.column_dimensions[get_column_letter(i)].width = width
     ws.row_dimensions[hdr].height = 30
 
-    totals = {"_usd": 0.0, "_aud": 0.0, "_gbp": 0.0, "_eur": 0.0, "paid_amount": 0.0}
+    totals = {"_usd": 0.0, "_aud": 0.0, "_gbp": 0.0, "_eur": 0.0, "paid_amount": 0.0, "paid_amount_aud": 0.0}
     r = hdr
     for row in rows:
         r += 1

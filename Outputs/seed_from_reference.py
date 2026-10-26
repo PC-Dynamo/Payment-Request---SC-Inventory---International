@@ -15,6 +15,7 @@ Idempotent and non-destructive: a line anyone has already touched in the app
 is never overwritten, and a charge row is imported once (keyed by its content).
 
   python seed_from_reference.py [--dry-run] [--since 2026-08-01]
+  python seed_from_reference.py --sync --from-sharepoint   # the live workbook (server)
 """
 from __future__ import annotations
 
@@ -22,8 +23,10 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 import sys
+import urllib.parse
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -34,6 +37,10 @@ import payments as P  # noqa: E402
 
 REF_DIR = HERE.parent / "Reference"
 PAYLOAD = HERE / "report_payload.json"
+# The team's live workbook on SharePoint (Supply Chain site), for --from-sharepoint.
+TEAM_WORKBOOK = os.environ.get(
+    "SP_TEAM_WORKBOOK", "General/1. Excel/Procurement Reports/Payment Request for Four-week Rolling Forecast.xlsx")
+AWST = dt.timezone(dt.timedelta(hours=8))
 
 CHARGE_RULES = [
     (r"customs\s*\+\s*gst|customs brokerage|brokerage", "Customs Brokerage"),
@@ -84,6 +91,12 @@ def _txt(v) -> str:
     return re.sub(r"\s+", " ", str(v or "").replace("\xa0", " ")).strip()
 
 
+def _paid_currency(v) -> str | None:
+    c = _txt(v).upper()
+    c = {"RMB": "CNY", "EURO": "EUR"}.get(c, c)
+    return c if c in L.PAID_CURRENCIES else None
+
+
 def _charge_type(status: str) -> str | None:
     s = status.lower()
     for rx, label in CHARGE_RULES:
@@ -114,6 +127,31 @@ def peach_rows(path: Path) -> set[int]:
     return out
 
 
+def fetch_team_workbook() -> Path:
+    """Download the team's live workbook from SharePoint into cache/, named after
+    the time it was last saved, so the change log says which copy was imported."""
+    import requests
+    import masters as M
+    client = M._graph_client()
+    if not client:
+        raise SystemExit(f"no Graph credentials at {M.GRAPH_ENV}")
+    H, drive_id = client
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{urllib.parse.quote(TEAM_WORKBOOK)}"
+    meta = requests.get(url, headers=H, timeout=60)
+    if meta.status_code != 200:
+        raise SystemExit(f"team workbook not found on SharePoint ({meta.status_code}): {TEAM_WORKBOOK}")
+    saved = dt.datetime.fromisoformat(meta.json()["lastModifiedDateTime"].replace("Z", "+00:00"))
+    blob = requests.get(url + ":/content", headers=H, timeout=300)
+    blob.raise_for_status()
+    dest = HERE / "cache" / f"team workbook saved {saved.astimezone(AWST):%d-%m-%Y %H%M} AWST.xlsx"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(blob.content)
+    # It holds supplier payment history: keep only the last few copies.
+    for old in sorted(dest.parent.glob("team workbook saved *.xlsx"), key=lambda p: p.stat().st_mtime)[:-5]:
+        old.unlink(missing_ok=True)
+    return dest
+
+
 def load_reference(path: Path) -> list[dict]:
     import openpyxl
     peach = peach_rows(path)
@@ -122,11 +160,13 @@ def load_reference(path: Path) -> list[dict]:
     it = ws.iter_rows(values_only=True)
     header = [_txt(h).lower() for h in next(it)]
 
-    def col(name):
-        for i, h in enumerate(header):
-            if h.startswith(name):
-                return i
-        raise KeyError(name)
+    def col(name, required=True):
+        exact = [i for i, h in enumerate(header) if h == name]
+        for i in exact or [i for i, h in enumerate(header) if h.startswith(name)]:
+            return i
+        if required:
+            raise KeyError(name)
+        return 10 ** 6                       # beyond any row: reads as empty
 
     ix = {k: col(n) for k, n in {
         "entry": "entry date", "vendor": "vendor entity", "supplier": "supplier name",
@@ -135,6 +175,9 @@ def load_reference(path: Path) -> list[dict]:
         "usd": "value (usd)", "aud": "value (aud)", "gbp": "value (gbp)", "eur": "value (eur)",
         "paid": "paid date", "paid_amt": "paid amount", "comment": "comment",
         "acc": "accounts scheduled"}.items()}
+    # Accounts' columns, if the workbook has them (added to the app 26 Oct 2026).
+    ix["paid_cur"] = col("paid currency", required=False)
+    ix["paid_aud"] = col("paid amount (aud)", required=False)
     rows = []
     for n, r in enumerate(it, start=2):
         if not r or not any(r):
@@ -150,6 +193,7 @@ def load_reference(path: Path) -> list[dict]:
             "eur": _num(g("eur")), "paid": _date(g("paid")),
             "paid_amt": _num(g("paid_amt")), "comment": _txt(g("comment")),
             "acc": _date(g("acc")),
+            "paid_cur": _paid_currency(g("paid_cur")), "paid_aud": _num(g("paid_aud")),
             "peach": n in peach,
         })
     wb.close()
@@ -204,6 +248,7 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
                 "status": st, "paid_date": row["paid"],
                 "comment": (row["comment"] or f"{status} (imported)")[:600],
                 "acc_scheduled_date": row["acc"], "paid_amount": row["paid_amt"],
+                "paid_currency": row["paid_cur"], "paid_amount_aud": row["paid_aud"],
                 "_history_only": history_only,
                 "finalised": None if row["paid"] else (0 if row["peach"] else 1),
             })
@@ -263,6 +308,10 @@ def plan(rows: list[dict], auto: list[dict], since: str, today: dt.date) -> tupl
                 v["acc_scheduled_date"] = row["acc"]
                 if v.get("status") == "Paid" and row["paid_amt"]:
                     v["paid_amount"] = row["paid_amt"]
+                if row["paid_cur"]:
+                    v["paid_currency"] = row["paid_cur"]
+                if row["paid_aud"] is not None:
+                    v["paid_amount_aud"] = row["paid_aud"]
                 if row["comment"] and "comment" not in v:
                     v["comment"] = row["comment"]
                 v["_row"] = row["row"]
@@ -299,9 +348,10 @@ def backfill(states: dict, charges: list) -> int:
 
 SYNC_LINE_FIELDS = ("status", "request_date", "paid_date", "amount", "currency", "invoice_no",
                     "comment", "vendor_entity", "acc_scheduled_date", "paid_amount", "finalised",
-                    "plan_due")
+                    "plan_due", "paid_currency", "paid_amount_aud")
 SYNC_MANUAL_FIELDS = ("status", "request_date", "paid_date", "due_date", "amount", "currency",
-                      "doc_no", "comment", "acc_scheduled_date", "paid_amount", "vendor", "finalised")
+                      "doc_no", "comment", "acc_scheduled_date", "paid_amount", "vendor", "finalised",
+                      "paid_currency", "paid_amount_aud")
 SEED_WHO = "seed: payment request workbook"
 
 
@@ -410,6 +460,8 @@ def main() -> int:
     ap.add_argument("--since", default="2026-08-01",
                     help="import charge lines entered or requested on/after this date")
     ap.add_argument("--file", help="reference workbook (default: newest in Reference/)")
+    ap.add_argument("--from-sharepoint", action="store_true",
+                    help="use the team's live workbook, downloaded from SharePoint now (server)")
     ap.add_argument("--sync", action="store_true",
                     help="bring the app up to a newer copy of the workbook (keeps people's edits)")
     ap.add_argument("--backfill", action="store_true",
@@ -417,8 +469,11 @@ def main() -> int:
                          "scheduled date, paid amount) on lines the seed created and nobody edited")
     a = ap.parse_args()
 
-    ref = Path(a.file) if a.file else max(REF_DIR.glob("Payment Request*.xlsx"),
-                                          key=lambda p: p.stat().st_mtime)
+    if a.from_sharepoint:
+        ref = fetch_team_workbook()
+    else:
+        ref = Path(a.file) if a.file else max(REF_DIR.glob("Payment Request*.xlsx"),
+                                              key=lambda p: p.stat().st_mtime)
     rows = load_reference(ref)
     auto = json.loads(PAYLOAD.read_text(encoding="utf-8"))["auto_lines"]
     today = dt.date.today()

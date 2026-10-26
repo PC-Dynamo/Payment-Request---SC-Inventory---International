@@ -270,7 +270,9 @@ def test_oct15():
         wb = openpyxl.load_workbook(path)
         hdr = [c.value for c in wb["updated"][1]]
         check(wb.sheetnames[:2] == ["updated", "App register"] and hdr[11] == "Payment Status/Type"
-              and hdr[8] == "ETA\n(Forwarder)" and len(hdr) == 24, "backup uses the team's register layout")
+              and hdr[8] == "ETA\n(Forwarder)" and hdr[23] == "%" and len(hdr) == 26
+              and hdr[24:] == ["Paid Currency", "Paid Amount (AUD)"],
+              "backup uses the team's register layout, Accounts' two columns after it")
         check(wb["updated"]["L2"].value == "Paid" and "Special Arrangements" in wb.sheetnames,
               "status wording and remarks sheet in the backup")
         wb.close()
@@ -302,6 +304,15 @@ def test_uat_16oct():
     check(rows[0]["request_date"] == "2026-10-20", "a plan earlier than the due date on purpose stays")
     rows, _ = P.merge([base], {"PO-80001|full": dict(plan, status="Requested")}, [], D("2026-10-17"), 4)
     check(rows[0]["request_date"] == "2026-10-20", "a line already sent to Accounts keeps its date")
+    early = {"request_date": "2026-11-03", "plan_due": "2026-11-10"}
+    rows, _ = P.merge([dict(base, due_auto="2026-11-01")], {"PO-80001|full": early}, [], D("2026-10-26"), 4)
+    check(rows[0]["request_date"] == "2026-11-03" and any("earlier" in f for f in rows[0]["flags"]),
+          "a PO that comes forward keeps its planned date and is flagged (Accounts may have scheduled it)")
+    dep = dict(base, line_id="PO-80001|deposit", kind="deposit", due_anchor="order", due_auto="2026-10-23")
+    rows, _ = P.merge([dep], {"PO-80001|deposit": {"request_date": "2026-10-20", "plan_due": "2026-10-06"}},
+                      [], D("2026-10-17"), 4)
+    check(rows[0]["request_date"] == "2026-10-20" and not rows[0].get("replanned_from"),
+          "a deposit keeps its plan when approval moves the PO date (VOG PO-140079)")
 
     gc = {"Qingdao Great Century Plastic Co.,Ltd": {"deposit_pct": 0, "anchor": "order", "offset_days": 0,
                                                     "rule": "100% T/T in advance"}}
@@ -375,9 +386,42 @@ def test_uat_16oct():
     L.DB = HERE / "ledger.db"
 
 
+def test_oct26():
+    """Accounts' paid currency and paid amount in AUD (26 Oct 2026)."""
+    import seed_from_reference as SR
+    check(L.clean("paid_currency", "cny") == "CNY" and L.clean("paid_currency", "") is None,
+          "paid currency accepts CNY, blank = automatic")
+    try:
+        L.clean("paid_currency", "XYZ")
+        check(False, "an unknown paid currency is accepted")
+    except ValueError:
+        pass
+    check(L.clean("paid_amount_aud", "3,250.5") == 3250.5, "paid amount (AUD) parsed")
+    check(SR._paid_currency("RMB") == "CNY" and SR._paid_currency("Euro") == "EUR"
+          and SR._paid_currency("bitcoin") is None, "workbook paid currencies are tidied, unknown ones ignored")
+    base = {"source": "auto", "po": "PO-90001", "po_list": ["PO-90001"], "vendor": "X", "state": "WA",
+            "segment": "Retail", "currency": "USD", "flags": [], "assumed_paid": None, "kind": "full",
+            "line_id": "PO-90001|full", "amount_auto": 10.0, "due_auto": "2026-10-20"}
+    rows, _ = P.merge([base], {"PO-90001|full": {"status": "Paid", "paid_amount": 10.0}}, [], D("2026-10-26"), 4)
+    r = rows[0]
+    check(r["paid_currency"] == "USD" and r["paid_currency_default"] and r["paid_amount_aud"] is None,
+          "paid in the line's currency by default; the AUD cost is left to Accounts")
+    rows, _ = P.merge([base], {"PO-90001|full": {"status": "Paid", "paid_amount": 10.0, "paid_currency": "CNY",
+                                                 "paid_amount_aud": 2.1}}, [], D("2026-10-26"), 4)
+    check((rows[0]["paid_currency"], rows[0]["paid_amount_aud"], rows[0]["paid_aud_default"]) == ("CNY", 2.1, False),
+          "what Accounts types wins")
+    man = [{"id": 9, "po_refs": "PO-90001", "pay_type": "Customs Brokerage", "currency": "AUD", "amount": 800.0,
+            "due_date": None, "status": "Paid", "paid_amount": 800.0}]
+    rows, _ = P.merge([], {}, man, D("2026-10-26"), 4)
+    check(rows[0]["paid_currency"] == "AUD" and rows[0]["paid_amount_aud"] == 800.0 and rows[0]["paid_aud_default"],
+          "an AUD charge paid in AUD fills the AUD column by itself")
+    rows, _ = P.merge([base], {}, [], D("2026-10-26"), 4)
+    check(rows[0]["paid_currency"] is None and rows[0]["paid_amount_aud"] is None, "nothing paid, nothing shown")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
-               test_oct15, test_uat_16oct, test_data):
+               test_oct15, test_uat_16oct, test_oct26, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

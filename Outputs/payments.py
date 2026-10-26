@@ -48,7 +48,10 @@ DEPOSIT_RATE_MIN = 0.5
 # against the due date of that day. When the PO slips by more than a week -
 # its ETA moved in Cin7 or the forwarder report - the plan moves with it
 # (UAT 16 Oct 2026: PO-135508 / PO-119793 kept 20 Oct after their ETA moved
-# four weeks; the team moved them to 17 Nov).
+# four weeks; the team moved them to 17 Nov). Only a slip moves a plan: a PO
+# that comes forward is flagged, as Accounts may already have scheduled it
+# (PO-131113, 26 Oct). A deposit or in-advance payment follows the PI, not the
+# ship dates: its PO date moves when a draft is approved (VOG PO-140079).
 REPLAN_MIN_DAYS = 7
 
 
@@ -370,16 +373,37 @@ def _po_context(auto: list[dict]) -> dict[str, dict]:
     return ctx
 
 
+def _paid_fields(row: dict, st: dict) -> None:
+    """Accounts' paid currency and the AUD a payment cost. Once a paid amount is
+    in, the currency defaults to the line's own; paid in AUD, the AUD is the
+    paid amount itself. Anything Accounts types wins."""
+    paid = st.get("paid_amount")
+    cur = st.get("paid_currency") or (row.get("currency") if paid is not None else None)
+    aud = st.get("paid_amount_aud")
+    if aud is None and cur == "AUD" and paid is not None:
+        aud = paid
+    row.update(paid_currency=cur, paid_amount_aud=aud,
+               paid_currency_default=bool(cur and not st.get("paid_currency")),
+               paid_aud_default=bool(aud is not None and st.get("paid_amount_aud") is None))
+
+
 def replanned(row: dict, st: dict, due: dt.date | None, today: dt.date,
               pay_weekdays: dict | None = None) -> dict:
-    """The record with its planned request date moved by as much as the due date
-    has moved since the plan was made (`plan_due`), if that is more than a week.
-    A line already sent to Accounts, paid or written off keeps its date."""
+    """The record with its planned request date moved later by as much as the due
+    date has slipped since the plan was made (`plan_due`), if that is more than
+    a week. A line already sent to Accounts, paid or written off keeps its date,
+    and so does a payment anchored on the PO date (deposit, paid in advance)."""
     req, base = _d(st.get("request_date")), _d(st.get("plan_due"))
-    if not (req and base and due) or st.get("status") in ("Requested", "Paid", "Not Payable"):
+    if not (req and base and due) or row.get("due_anchor") == "order" \
+            or st.get("status") in ("Requested", "Paid", "Not Payable"):
         return st
     shift = (due - base).days
-    if abs(shift) <= REPLAN_MIN_DAYS:
+    if shift < -REPLAN_MIN_DAYS:
+        row["flags"] = [*(row.get("flags") or []),
+                        f"the due date moved {-shift} days earlier after the request date was "
+                        f"planned ({req:%d/%m}) - check whether to request it sooner"]
+        return st
+    if shift <= REPLAN_MIN_DAYS:
         return st
     new = request_day_for(req + dt.timedelta(days=shift), today,
                           weekdays_for(row.get("currency"), pay_weekdays))
@@ -495,6 +519,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
         row["vendor"] = row["vendor_entity"]
         row["acc_scheduled_date"] = st.get("acc_scheduled_date")
         row["paid_amount"] = st.get("paid_amount")
+        _paid_fields(row, st)
         due = _d(st.get("due_date")) or _d(ln["due_auto"])
         row["due_overridden"] = bool(st.get("due_date"))
         out.append(finish(row, due, replanned(row, st, due, today, pay_weekdays)))
@@ -547,6 +572,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
             "amount": m.get("amount") or 0.0,
             "created_by": m.get("created_by"),
         }
+        _paid_fields(row, m)
         st = {"status": m.get("status"), "request_date": m.get("request_date"),
               "finalised": m.get("finalised"),
               "paid_date": m.get("paid_date"), "comment": m.get("comment"),
