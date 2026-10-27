@@ -171,9 +171,9 @@ def _evidence(st: dict) -> bool:
 
 def deposit_pct_of(pay_type) -> float | None:
     """'Deposit 30%' -> 30.0; 0.0 for a deposit with no percentage; None if the
-    payment type is not a deposit at all."""
+    payment type is not a deposit at all ('Full payment less bulk deposit' is not)."""
     text = str(pay_type or "")
-    if "deposit" not in text.lower():
+    if not text.strip().lower().startswith("deposit"):
         return None
     m = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
     pct = float(m.group(1)) if m else 0.0
@@ -200,16 +200,15 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
     stats = {"open_pos": 0, "bulk_excluded": 0, "no_terms": set(), "no_eta": 0,
              "awaiting_approval": 0, "calibrated": 0}
 
-    # Suppliers whose BULK order takes the deposit, later allocated to shipment
-    # POs (K-Life). Kpower / Iron Master / Bodylonger / Imbell bulk orders need
-    # no payment, so their China-stock POs stay out of the list.
+    # Suppliers whose BULK order takes the deposit (K-Life). Their shipment POs
+    # are paid in one payment; when the bulk order is closed its deposit is
+    # reallocated to a shipment PO, which then pays the rest (Rizqi, 27 Oct:
+    # PO-135014 voided, deposit moved to PO-142641). Kpower / Iron Master /
+    # Bodylonger / Imbell bulk orders need no payment, so their China-stock POs
+    # stay out of the list.
     bulk_dep = {M._key(x) for x in overrides.get("bulk_deposit_suppliers") or []}
     bulk_dep_book = T.TermsBook([{"supplier_name": x} for x in overrides.get("bulk_deposit_suppliers") or []])
     is_bulk_dep = lambda name: M._key(name) in bulk_dep or bool(bulk_dep_book.match(name))  # noqa: E731
-    open_bulk = {}
-    for ref, po in cache.get("pos", {}).items():
-        if po.get("is_open") and po.get("stage_raw") in BULK_STAGES and is_bulk_dep(po["supplier"]):
-            open_bulk.setdefault(M._key(po["supplier"]), []).append(ref)
     stats["bulk_included"] = 0
 
     for ref, po in sorted(cache.get("pos", {}).items()):
@@ -279,11 +278,8 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             flags.append(f"{len(po['unmapped_skus'])} SKU(s) not in master")
         review = ""
         if bulk:
-            review = "Bulk order deposit - allocate it to the shipment POs drawn from this order"
-        elif open_bulk.get(M._key(po["supplier"])) or is_bulk_dep(po["supplier"]):
-            review = ("Check before paying the deposit: it may already be paid on the bulk order "
-                      + ", ".join(sorted(open_bulk.get(M._key(po["supplier"]), [])) or "(bulk order)"))
-        if review:
+            review = ("Bulk order deposit - when the bulk order is closed, record its deposit on the "
+                      "shipment PO it is reallocated to")
             flags.append(review)
 
         base = {
@@ -334,6 +330,13 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             if dep:
                 base["terms_rule"] = "100% - recorded as one payment for this PO"
             dep = 0.0
+        elif not bulk and is_bulk_dep(po["supplier"]):
+            # K-Life shipment PO: the deposit was paid on the bulk order, so this
+            # PO is one payment (less the bulk deposit, on the PO it is moved to).
+            base["terms_rule"] = ("100% one payment - the deposit is paid on the bulk (China stock) order; "
+                                  "the shipment PO it is reallocated to pays the rest"
+                                  + (" - " + rule["rule"].split(" - ", 1)[1] if " - " in rule["rule"] else ""))
+            dep = 0.0
         mile = []
         if bulk:
             # Only the deposit is paid on the bulk order; balances follow on
@@ -374,54 +377,8 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
                 "review": review if (kind == "deposit" or bulk) else "",
             })
     stats["no_terms"] = sorted(stats["no_terms"])
-    stats["bulk_allocated"] = _allocate_bulk_deposits(lines, cache, states or {}, is_bulk_dep)
     return lines, stats
 
-
-def _allocate_bulk_deposits(lines: list[dict], cache: dict, states: dict, is_bulk_dep) -> int:
-    """K-Life: the deposit is paid on the bulk (China stock) order, and the
-    shipment POs drawn from it carry no deposit of their own. While the deposits
-    paid on a supplier's open bulk orders cover them, oldest PO first, the
-    shipment POs' deposit lines count as allocated - not payable - instead of
-    asking to be checked (ACC, 27 Oct 2026: PO-142640/41/42 were counted in the
-    pay run though PO-135014's deposit, paid 13 Oct, covered them). A deposit
-    anyone has recorded something on is left alone."""
-    by_id = {ln["line_id"]: ln for ln in lines}
-    pools: dict[str, dict] = {}
-    for ref, po in sorted(cache.get("pos", {}).items(), key=lambda kv: (kv[1].get("po_date") or "", kv[0])):
-        if not (po.get("is_open") and po.get("stage_raw") in BULK_STAGES and is_bulk_dep(po["supplier"])):
-            continue
-        st = states.get(f"{ref}|deposit") or {}
-        if not (st.get("status") in ("Paid", "Requested") or st.get("paid_date")):
-            continue
-        paid = st.get("paid_amount") if st.get("paid_amount") is not None else st.get("amount")
-        if paid is None:
-            paid = (by_id.get(f"{ref}|deposit") or {}).get("amount_auto") or 0.0
-        pool = pools.setdefault(M._key(po["supplier"]), {"left": 0.0, "refs": [], "since": po.get("po_date") or ""})
-        pool["left"] += float(paid)
-        pool["refs"].append(ref)
-    n = 0
-    for ln in sorted(lines, key=lambda x: (x.get("entry_date") or "", x["po"])):
-        pool = pools.get(M._key(ln["vendor"]))
-        if not pool or ln["kind"] != "deposit" or ln.get("bulk") or (ln.get("entry_date") or "") < pool["since"] \
-                or _evidence(states.get(ln["line_id"]) or {}) or (states.get(ln["line_id"]) or {}).get("status"):
-            continue
-        refs = ", ".join(pool["refs"])
-        if ln["amount_auto"] > pool["left"] + 0.01:
-            ln["flags"] = [*ln["flags"], f"bulk deposit on {refs} has USD {pool['left']:,.2f} left - "
-                                         "not enough to cover this deposit"]
-            continue
-        pool["left"] -= ln["amount_auto"]
-        ln["allocated_from"] = refs
-        ln["review"] = ""
-        ln["flags"] = [f for f in ln["flags"] if not f.startswith("Check before paying")] + [
-            f"deposit allocated from the bulk order {refs} (its deposit is paid; USD {pool['left']:,.2f} "
-            "left for further shipment POs)"]
-        bal = by_id.get(f"{ln['po']}|balance")
-        if bal:
-            bal["flags"] = [f for f in bal["flags"] if not f.startswith("Check before paying")]
-        n += 1
-    return n
 
 
 # ----------------------------------------------------------------------- merge
@@ -498,10 +455,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
                                 "draft PO in Cin7 (not approved yet) - in the pay run because a "
                                 "request date was set; approve it when paying"]
         if not status:
-            if row.get("allocated_from"):
-                status = "Not Payable"          # covered by the bulk order's deposit
-                row["status_assumed"] = True
-            elif row.get("assumed_paid"):
+            if row.get("assumed_paid"):
                 status = "Paid"
                 row["status_assumed"] = True
             elif req is not None:

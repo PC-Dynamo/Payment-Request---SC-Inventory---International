@@ -420,9 +420,8 @@ def test_oct26():
 
 
 def test_oct27():
-    """ACC check of the 27 Oct pay run (Arlene): K-Life deposits covered by the bulk
-    order, and timing from scattered history (Rizhao Pioneer)."""
-    import build_report as BR
+    """27 Oct: K-Life shipment POs are one payment (Rizqi; the bulk order's deposit is
+    reallocated to a shipment PO), and timing from scattered history (Rizhao Pioneer)."""
     kl = "Xiamen K-Life Sport Co., Ltd"
     ov = {"bulk_deposit_suppliers": [kl], "term_aliases": {kl: "KLife"}}
     terms = [{"supplier_name": "KLife", "terms": "30% deposit, 70% balance before shipment", "deposit_pct": "30"}]
@@ -433,28 +432,22 @@ def test_oct27():
         "PO-142640": dict(ship, value_usd=15858.0), "PO-142641": dict(ship, value_usd=22770.0),
         "PO-142642": dict(ship, value_usd=10470.0),
         "PO-142999": dict(ship, po_date="2026-10-25", value_usd=10000.0)}}
-    paid = {"PO-135014|deposit": {"status": "Paid", "paid_date": "2026-10-13", "paid_amount": 17127.0}}
-    lines, stats = P.auto_lines(cache, terms, ov, {}, paid)
-    dep = {ln["po"]: ln for ln in lines if ln["kind"] == "deposit"}
-    check(all(dep[p].get("allocated_from") == "PO-135014" and not dep[p]["review"]
-              for p in ("PO-142640", "PO-142641", "PO-142642")) and stats["bulk_allocated"] == 3,
-          "K-Life deposits covered by the paid bulk deposit are allocated (14,729.40 of 17,127)")
-    check(not dep["PO-142999"].get("allocated_from") and dep["PO-142999"]["review"]
-          and any("not enough" in f for f in dep["PO-142999"]["flags"]),
-          "a deposit the bulk deposit no longer covers stays CHECK (USD 2,397.60 left < 3,000)")
-    rows, _ = P.merge(lines, paid, [], D("2026-10-27"), 4)
-    by = {r["line_id"]: r for r in rows}
-    r = by["PO-142641|deposit"]
-    check(r["status"] == "Not Payable" and r["status_assumed"] and not r["this_request"]
-          and BR.status_type(r) == "Allocated from PO-135014",
-          "an allocated deposit is not in the pay run and reads 'Allocated from PO-135014'")
-    check(by["PO-135014|deposit"]["status"] == "Paid" and by["PO-142641|balance"]["status"] in ("Forecast", "For Payment"),
-          "the bulk deposit and the shipment POs' balances are untouched")
-    lines, _ = P.auto_lines(cache, terms, ov, {}, {**paid, "PO-142640|deposit": {"amount": 4757.4}})
-    check(not [ln for ln in lines if ln["line_id"] == "PO-142640|deposit"][0].get("allocated_from"),
-          "a deposit someone recorded an amount on is left to them")
-    lines, _ = P.auto_lines(cache, terms, ov, {}, {})
-    check(not any(ln.get("allocated_from") for ln in lines), "nothing is allocated before the bulk deposit is paid")
+    lines, stats = P.auto_lines(cache, terms, ov, {}, {})
+    kinds = {}
+    for ln in lines:
+        kinds.setdefault(ln["po"], []).append(ln["kind"])
+    check(all(kinds[p] == ["full"] for p in ("PO-142640", "PO-142641", "PO-142642", "PO-142999"))
+          and not any(ln["review"] for ln in lines if not ln.get("bulk")),
+          "K-Life shipment POs are one full payment each, nothing to check (Rizqi, 27 Oct)")
+    check(kinds["PO-135014"] == ["deposit"] and [ln for ln in lines if ln["po"] == "PO-135014"][0]["review"],
+          "the K-Life bulk order still carries its deposit, flagged for review")
+    moved = {"PO-142641|deposit": {"status": "Not Payable", "amount": 17127.0,
+                                   "comment": "Allocated from PO-135014"}}
+    lines, _ = P.auto_lines(cache, terms, ov, {}, moved)
+    check(sorted(ln["kind"] for ln in lines if ln["po"] == "PO-142641") == ["balance", "deposit"],
+          "a deposit someone records on a K-Life shipment PO keeps deposit + balance")
+    check(P.deposit_pct_of("Full payment less bulk deposit") is None and P.deposit_pct_of("Deposit 30%") == 30,
+          "only a payment type that starts with 'Deposit' is a deposit")
 
     cal = {"deposit_rate": 0.5, "deposit_pos": 4, "deposit_pct": 30.0, "anchor": "etd", "offset_days": -11,
            "n": 12, "mad": 22.5}

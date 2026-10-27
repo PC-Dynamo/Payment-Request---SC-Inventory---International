@@ -254,8 +254,6 @@ TEAM_COLUMNS = [
 def status_type(row: dict) -> str:
     """The team's 'Payment Status/Type' wording for a line."""
     st = row.get("status")
-    if st == "Not Payable" and row.get("allocated_from") and row.get("status_assumed"):
-        return f"Allocated from {row['allocated_from']}"      # the team's own wording
     if st == "Not Payable":
         return "Not payable"
     if row.get("source") == "manual":
@@ -422,7 +420,7 @@ def _sheet_app_register(ws, rows: list[dict], meta: dict, subtitle: str = "") ->
             if kind == "date" and v:
                 v = dt.date.fromisoformat(str(v)[:10])
             if key == "status" and row.get("status_assumed"):
-                v = "Not payable (allocated)" if row.get("status") == "Not Payable" else "Paid (assumed)"
+                v = "Paid (assumed)"
             c = ws.cell(row=r, column=i, value=v)
             c.border = Border(bottom=thin)
             if kind == "date":
