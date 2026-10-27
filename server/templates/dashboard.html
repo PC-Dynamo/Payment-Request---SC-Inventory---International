@@ -210,7 +210,7 @@ dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
     <section>
       <div class="totals" id="totals"></div>
       <div class="tscroll"><table class="reg" id="tbl"><colgroup id="cols"></colgroup><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
-      <div class="note"><span class="rv">BULK</span> / <span class="rv">CHECK</span> purple rows need a review: K-Life bulk-order deposit, or a deposit that may already be paid on the bulk order.<br>Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount, paid currency, paid amount in AUD). ✎ opens every field; on a deposit, <b>Balance</b> opens the PO's balance line; on a line added by hand, <b>Copy</b> starts a new line from it.
+      <div class="note"><span class="rv">BULK</span> / <span class="rv">CHECK</span> purple rows need a review: K-Life bulk-order deposit, or a deposit the paid bulk order does not fully cover. Deposits it covers show as Not payable (allocated).<br>Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount, paid currency, paid amount in AUD). ✎ opens every field; on a deposit, <b>Balance</b> opens the PO's balance line; on a line added by hand, <b>Copy</b> starts a new line from it.
         <label style="margin-left:14px">Group by <select id="fGroup"><option value="date">Request date</option><option value="payee">Payee</option><option value="date_payee">Request date + payee</option><option value="">None</option></select></label>
         <button id="bSubmit" disabled style="margin-left:10px">Mark selected as Requested</button></div>
     </section>
@@ -286,7 +286,7 @@ async function api(url,opt={}){
   if(!r.ok||j.ok===false)throw new Error(j.error||`HTTP ${r.status}`);
   return j;
 }
-const statusLabel=r=>r.status_assumed?"Paid (assumed)":r.status;
+const statusLabel=r=>r.status_assumed?(r.status==="Not Payable"?"Not payable (allocated)":"Paid (assumed)"):r.status;
 const etaOf=r=>r.eta_port||r.eta_cin7||"";
 
 // ------------------------------------------------------------------ filters
@@ -321,7 +321,7 @@ function buildFilters(){
 function fillSelects(){
   opts("#fSup",suppliers(),"All suppliers");
   opts("#fStage",[...new Set(DATA.map(r=>r.stage).filter(Boolean))].sort(),"All stages");
-  opts("#fStatus",["For Payment","Requested","Paid","Paid (assumed)","On Hold","Not Payable","Forecast","Date TBC","Awaiting Approval"],"All statuses");
+  opts("#fStatus",["For Payment","Requested","Paid","Paid (assumed)","On Hold","Not Payable","Not payable (allocated)","Forecast","Date TBC","Awaiting Approval"],"All statuses");
   opts("#fType",payTypes(),"All types");
   ["sup","stage","status","type"].forEach(k2=>{const el=$({sup:"#fSup",stage:"#fStage",status:"#fStatus",type:"#fType"}[k2]);if(F[k2])el.value=F[k2];if(el.value!==F[k2])F[k2]=el.value});
 }
@@ -449,7 +449,7 @@ function cell(r,c){
     case "request_date": return esc(dd(r.request_date))+(r.carried_from?`<span class="muted" title="Planned for ${esc(dd(r.carried_from))}, not paid yet - moved to the next pay run">↻</span>`:"")
       +(r.replanned_from?`<span class="muted" title="Planned for ${esc(dd(r.replanned_from))}; the due date has moved since, so the request date moved with it">⇢</span>`:"");
     case "due_date": return `<span class="${r.overdue?"od":""}" title="${esc(r.due_overridden?"due date set by hand":(r.terms_rule||""))}">${esc(dd(r.due_date))||'<span class="muted">TBC</span>'}</span>`;
-    case "status": return `<span class="pill st-${esc(String(r.status).replace(/\s+/g,""))}" title="${esc(r.assumed_paid||"")}">${esc(statusLabel(r))}</span>`;
+    case "status": return `<span class="pill st-${esc(String(r.status).replace(/\s+/g,""))}" title="${esc(r.allocated_from&&r.status_assumed?`Deposit covered by the bulk order ${r.allocated_from}`:r.assumed_paid||"")}">${esc(statusLabel(r))}</span>`;
     case "USD":case "AUD":case "GBP":case "EUR":
       return r.currency===key?money(r.amount)+(r.source==="auto"&&!r.amount_overridden&&!r.usd_exact&&key==="USD"?' <span class="muted" title="estimated USD - enter the invoice amount">~</span>':""):"";
     case "paid_amount": return money(r.paid_amount);
@@ -731,6 +731,8 @@ function renderNotes(){
     `<b>Peach rows</b> = not finalised yet (PI / amount still to confirm), as in the team's Excel. A line counts as finalised once its PI amount or invoice no. is entered, or when the Final box is ticked. The app estimates USD from Cin7 costs - the supplier's PI amount always has to be entered by hand.`,
     `<b>Payee</b>: Supplier (factory) = PO payments; Forwarder / broker = freight, customs, GST, duty, cartage (Mainfreight, Ice Cargo); Other = e.g. inspections.`,
     `<b>Paid (assumed)</b>: deposits of approved POs older than 3 weeks or on the water, and pre-shipment payments of POs on the water, until someone records otherwise.`,
+    `<b>Not payable (allocated)</b>: a K-Life shipment PO's deposit while the deposit paid on the bulk (China stock) order covers it, oldest PO first; the rest are flagged CHECK. Anything recorded on the line wins.`,
+    `<b>Timing from team history</b> is used only when the team's past payment dates are consistent (within ±10 days); otherwise the master-data terms or the default apply (e.g. Rizhao Pioneer).`,
     `<b>Filters</b>: ETA filters on the forwarder ETA, or the Cin7 ETA when there is none. Totals and the Excel export follow every filter.`,
     s.no_terms&&s.no_terms.length?`<b>No payment terms in master-data</b> (defaulted to full payment 7 days before ETA): ${s.no_terms.map(esc).join(", ")}.`:"",
     m.unmapped_skus&&m.unmapped_skus.length?`<b>SKUs not in the master</b> after re-reading it: ${m.unmapped_skus.map(esc).join(", ")}.`:"",
@@ -779,7 +781,7 @@ function renderSpecRules(){
   const sp=Object.entries(SPECIAL||{}).map(([s,v])=>`<li><b>${esc(s)}</b>: ${esc(v.rule||"")}</li>`).join("");
   $("#specRules").innerHTML=`<ul class="notes">
       <li><b>Pay runs</b>: Tuesday for supplier payments and USD freight; Thursday for AUD charges. A line still unpaid after its run moves to the next one (↻).</li>
-      <li><b>K-Life bulk orders</b>: the deposit is requested on the bulk (China stock) order (purple, BULK); deposits on K-Life shipment POs are flagged CHECK.</li>
+      <li><b>K-Life bulk orders</b>: the deposit is requested on the bulk (China stock) order (purple, BULK); deposits on K-Life shipment POs count as allocated from it (Not payable) while its paid deposit covers them; the rest are flagged CHECK.</li>
       <li><b>New POs not yet approved in Cin7</b> are listed as Awaiting Approval and requested only once someone sets a payment request date.</li>
       <li><b>Planned request dates</b> move later with the due date when a PO slips by more than a week (⇢); a PO that comes forward is flagged, not moved. Deposits keep their date.</li>
       ${sp}</ul>

@@ -44,6 +44,11 @@ DEPOSIT_ASSUME_DAYS = 21
 # Below this share of recent POs with a deposit, a supplier is treated as
 # "full payment" by default (UAT 6 Oct 2026: Kpower 33%, Great Century 0%).
 DEPOSIT_RATE_MIN = 0.5
+# Payment history whose dates scatter more than this (median absolute deviation,
+# days) says nothing reliable about timing: the master-data / default rule is
+# used instead (27 Oct 2026: Rizhao Pioneer +-22.5 days put three balances in
+# that day's run; every other supplier is within 7).
+TIMING_MAD_MAX = 10
 # A request date someone planned (in the app or the team's workbook) was set
 # against the due date of that day. When the PO slips by more than a week -
 # its ETA moved in Cin7 or the forwarder report - the plan moves with it
@@ -137,11 +142,18 @@ def _calibrated(rule: dict, cal: dict | None) -> dict:
     # Paid in advance on the PO date: there is no shipping date to measure the
     # team's habit against, so history does not move it.
     if cal.get("anchor") and cal.get("n", 0) >= 5 and rule["balance_anchor"] != "order":
-        off = int(cal["offset_days"])
-        where = "ETD" if cal["anchor"] == "etd" else "forwarder ETA"
-        rule["balance_anchor"], rule["balance_offset"] = cal["anchor"], off
-        notes.append(f"requested {abs(off)} days {'before' if off <= 0 else 'after'} {where} "
-                     f"(team history, {cal['n']} payments)")
+        if (cal.get("mad") or 0) <= TIMING_MAD_MAX:
+            off = int(cal["offset_days"])
+            where = "ETD" if cal["anchor"] == "etd" else "forwarder ETA"
+            rule["balance_anchor"], rule["balance_offset"] = cal["anchor"], off
+            notes.append(f"requested {abs(off)} days {'before' if off <= 0 else 'after'} {where} "
+                         f"(team history, {cal['n']} payments)")
+        else:
+            off = rule["balance_offset"]
+            where = {"etd": "ETD", "eta": "forwarder ETA"}.get(rule["balance_anchor"], "the PO date")
+            notes.append(f"requested {abs(off)} days {'before' if off <= 0 else 'after'} {where} "
+                         f"({'master-data terms' if rule['source'] != 'default' else 'default'}: the team's "
+                         f"payment dates scatter too widely to follow, +-{cal['mad']:g} days)")
     if notes:
         dep = rule["deposit_pct"]
         head = f"{dep:g}% deposit after approval; {100 - dep:g}% balance" if dep else "100%"
@@ -362,7 +374,54 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
                 "review": review if (kind == "deposit" or bulk) else "",
             })
     stats["no_terms"] = sorted(stats["no_terms"])
+    stats["bulk_allocated"] = _allocate_bulk_deposits(lines, cache, states or {}, is_bulk_dep)
     return lines, stats
+
+
+def _allocate_bulk_deposits(lines: list[dict], cache: dict, states: dict, is_bulk_dep) -> int:
+    """K-Life: the deposit is paid on the bulk (China stock) order, and the
+    shipment POs drawn from it carry no deposit of their own. While the deposits
+    paid on a supplier's open bulk orders cover them, oldest PO first, the
+    shipment POs' deposit lines count as allocated - not payable - instead of
+    asking to be checked (ACC, 27 Oct 2026: PO-142640/41/42 were counted in the
+    pay run though PO-135014's deposit, paid 13 Oct, covered them). A deposit
+    anyone has recorded something on is left alone."""
+    by_id = {ln["line_id"]: ln for ln in lines}
+    pools: dict[str, dict] = {}
+    for ref, po in sorted(cache.get("pos", {}).items(), key=lambda kv: (kv[1].get("po_date") or "", kv[0])):
+        if not (po.get("is_open") and po.get("stage_raw") in BULK_STAGES and is_bulk_dep(po["supplier"])):
+            continue
+        st = states.get(f"{ref}|deposit") or {}
+        if not (st.get("status") in ("Paid", "Requested") or st.get("paid_date")):
+            continue
+        paid = st.get("paid_amount") if st.get("paid_amount") is not None else st.get("amount")
+        if paid is None:
+            paid = (by_id.get(f"{ref}|deposit") or {}).get("amount_auto") or 0.0
+        pool = pools.setdefault(M._key(po["supplier"]), {"left": 0.0, "refs": [], "since": po.get("po_date") or ""})
+        pool["left"] += float(paid)
+        pool["refs"].append(ref)
+    n = 0
+    for ln in sorted(lines, key=lambda x: (x.get("entry_date") or "", x["po"])):
+        pool = pools.get(M._key(ln["vendor"]))
+        if not pool or ln["kind"] != "deposit" or ln.get("bulk") or (ln.get("entry_date") or "") < pool["since"] \
+                or _evidence(states.get(ln["line_id"]) or {}) or (states.get(ln["line_id"]) or {}).get("status"):
+            continue
+        refs = ", ".join(pool["refs"])
+        if ln["amount_auto"] > pool["left"] + 0.01:
+            ln["flags"] = [*ln["flags"], f"bulk deposit on {refs} has USD {pool['left']:,.2f} left - "
+                                         "not enough to cover this deposit"]
+            continue
+        pool["left"] -= ln["amount_auto"]
+        ln["allocated_from"] = refs
+        ln["review"] = ""
+        ln["flags"] = [f for f in ln["flags"] if not f.startswith("Check before paying")] + [
+            f"deposit allocated from the bulk order {refs} (its deposit is paid; USD {pool['left']:,.2f} "
+            "left for further shipment POs)"]
+        bal = by_id.get(f"{ln['po']}|balance")
+        if bal:
+            bal["flags"] = [f for f in bal["flags"] if not f.startswith("Check before paying")]
+        n += 1
+    return n
 
 
 # ----------------------------------------------------------------------- merge
@@ -439,7 +498,10 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
                                 "draft PO in Cin7 (not approved yet) - in the pay run because a "
                                 "request date was set; approve it when paying"]
         if not status:
-            if row.get("assumed_paid"):
+            if row.get("allocated_from"):
+                status = "Not Payable"          # covered by the bulk order's deposit
+                row["status_assumed"] = True
+            elif row.get("assumed_paid"):
                 status = "Paid"
                 row["status_assumed"] = True
             elif req is not None:

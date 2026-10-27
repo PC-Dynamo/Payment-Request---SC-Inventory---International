@@ -3,7 +3,7 @@
 compare_workbook.py - the app's pay runs against the team's payment workbook.
 
 For the Excel + app parallel run: for each pay run, the lines the app requests
-(For Payment / Requested on that date) and the workbook rows with that payment
+(For Payment / Requested / Forecast on that date) and the workbook rows with that payment
 request date are matched by PO(s) and currency, and their amounts compared.
 Read-only: nothing is imported or changed.
 
@@ -28,7 +28,8 @@ import seed_from_reference as SR  # noqa: E402
 def compare(rows: list[dict], book_rows: list[dict], run: str) -> tuple[int, list[str], int, int]:
     app, xl = {}, {}
     for r in rows:
-        if r.get("request_date") == run and r["status"] in ("For Payment", "Requested"):
+        # A later run's lines are still "Forecast" until it is the next run.
+        if r.get("request_date") == run and r["status"] in ("For Payment", "Requested", "Forecast"):
             app.setdefault((tuple(sorted(r.get("po_list") or [r["po"]])), r["currency"]), []).append(r)
     for r in book_rows:
         if r["req"] == run and r["status"]:
