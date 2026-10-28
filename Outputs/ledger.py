@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -79,7 +80,8 @@ CREATE TABLE IF NOT EXISTS audit (
 # request date was set, so the plan can follow the PO if it slips.
 LINE_FIELDS = ("status", "request_date", "paid_date", "due_date", "amount", "currency",
                "invoice_no", "comment", "pay_type", "vendor_entity", "acc_scheduled_date",
-               "paid_amount", "finalised", "plan_due", "paid_currency", "paid_amount_aud")
+               "paid_amount", "finalised", "plan_due", "paid_currency", "paid_amount_aud",
+               "bulk_from", "bulk_amount")
 MANUAL_FIELDS = ("entry_date", "vendor", "pay_type", "po_refs", "branch", "state", "segment",
                  "doc_no", "currency", "amount", "due_date", "request_date", "status",
                  "paid_date", "comment", "acc_scheduled_date", "paid_amount", "finalised",
@@ -90,7 +92,8 @@ MANUAL_FIELDS = ("entry_date", "vendor", "pay_type", "po_refs", "branch", "state
 MIGRATIONS = {
     "line_state": {"pay_type": "TEXT", "vendor_entity": "TEXT",
                    "acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER",
-                   "plan_due": "TEXT", "paid_currency": "TEXT", "paid_amount_aud": "REAL"},
+                   "plan_due": "TEXT", "paid_currency": "TEXT", "paid_amount_aud": "REAL",
+                   "bulk_from": "TEXT", "bulk_amount": "REAL"},
     "manual_line": {"acc_scheduled_date": "TEXT", "paid_amount": "REAL", "finalised": "INTEGER",
                     "paid_currency": "TEXT", "paid_amount_aud": "REAL"},
 }
@@ -143,7 +146,16 @@ def clean(field: str, value):
             return _date(value)
         except ValueError:
             raise ValueError(f"{field.replace('_', ' ')} must be a date (YYYY-MM-DD)")
-    if field in ("amount", "paid_amount", "paid_amount_aud"):
+    if field == "bulk_from":
+        # The bulk (China stock) order whose deposit was moved to this shipment PO.
+        v = str(value or "").strip()
+        if not v:
+            return None
+        m = re.fullmatch(r"(?:PO)?[\s-]*(\d{5,6})", v, re.I)
+        if not m:
+            raise ValueError("bulk deposit PO must be a PO number, e.g. PO-135014")
+        return f"PO-{m.group(1)}"
+    if field in ("amount", "paid_amount", "paid_amount_aud", "bulk_amount"):
         try:
             return _amount(value)
         except ValueError:

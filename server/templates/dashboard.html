@@ -444,7 +444,7 @@ function cell(r,c){
   switch(key){
     case "sel": return r.status==="For Payment"?`<input type="checkbox" class="sel" data-id="${esc(r.line_id)}" ${selected.has(r.line_id)?"checked":""} aria-label="select">`:"";
     case "vendor_entity": return `${esc(r.vendor_entity)}${r.flags&&r.flags.length?` <span class="flag" title="${esc(r.flags.join("\n"))}">⚠</span>`:""}`;
-    case "po": return cin7Link(r)+(r.bulk?'<span class="rv" title="Bulk order">BULK</span>':r.review?'<span class="rv" title="Check: deposit may be on the bulk order">CHECK</span>':"");
+    case "po": return cin7Link(r)+(r.bulk?'<span class="rv" title="Bulk order">BULK</span>':r.review?`<span class="rv" title="${esc(r.review)}">CHECK</span>`:"");
     case "etd": return esc(dd(r.etd))+(r.etd_estimated&&r.etd?'<span class="muted" title="estimated from ETA and transit time">*</span>':"");
     case "request_date": return esc(dd(r.request_date))+(r.carried_from?`<span class="muted" title="Planned for ${esc(dd(r.carried_from))}, not paid yet - moved to the next pay run">↻</span>`:"")
       +(r.replanned_from?`<span class="muted" title="Planned for ${esc(dd(r.replanned_from))}; the due date has moved since, so the request date moved with it">⇢</span>`:"");
@@ -581,7 +581,10 @@ function updSubmit(){const n=[...selected].filter(id=>DATA.some(r=>r.line_id===i
   $("#bSubmit").disabled=!n;$("#bSubmit").textContent=n?`Mark ${n} selected as Requested`:"Mark selected as Requested"}
 $("#bSubmit").onclick=async()=>{
   const ids=[...selected];if(!ids.length)return;
-  if(!confirm(`Mark ${ids.length} line(s) as Requested for their next pay run (USD ${dd(META.next_request)} / AUD ${dd(META.next_request_aud)})?`))return;
+  const chk=DATA.filter(r=>ids.includes(r.line_id)&&r.review).map(r=>r.po);
+  if(!confirm(`Mark ${ids.length} line(s) as Requested for their next pay run (USD ${dd(META.next_request)} / AUD ${dd(META.next_request_aud)})?`+(chk.length?`
+
+CHECK first (purple): ${chk.join(", ")} - see the note on the line.`:"")))return;
   try{const j=await api("api/submit-request",{method:"POST",body:JSON.stringify({line_ids:ids})});selected.clear();toast(`${j.requested} lines marked Requested`);await load(false)}
   catch(err){toast("Not saved: "+err.message)}
 };
@@ -624,6 +627,7 @@ function openLine(id){
       ${field("amount","Amount (blank = auto)",r.amount_overridden?r.amount:"","number")}
       ${field("currency","Currency",r.currency,"",META.currencies)}
       ${field("due_date","Due date (blank = from terms)",r.due_overridden?r.due_date:"","date")}
+      ${r.bulk_dep_supplier&&r.kind==="full"?field("bulk_from","Bulk deposit reallocated from (bulk PO no.)",r.bulk_from||"")+field("bulk_amount","Bulk deposit moved here, USD (blank = all of it)",r.bulk_amount_stored??"","number"):""}
       ${field("request_date","Payment request date (blank = auto)",r.request_stored,"date")}
       ${field("acc_scheduled_date","Accounts scheduled payment date",r.acc_scheduled_date,"date")}
       ${field("paid_date","Paid date",r.paid_date,"date")}
@@ -731,7 +735,7 @@ function renderNotes(){
     `<b>Peach rows</b> = not finalised yet (PI / amount still to confirm), as in the team's Excel. A line counts as finalised once its PI amount or invoice no. is entered, or when the Final box is ticked. The app estimates USD from Cin7 costs - the supplier's PI amount always has to be entered by hand.`,
     `<b>Payee</b>: Supplier (factory) = PO payments; Forwarder / broker = freight, customs, GST, duty, cartage (Mainfreight, Ice Cargo); Other = e.g. inspections.`,
     `<b>Paid (assumed)</b>: deposits of approved POs older than 3 weeks or on the water, and pre-shipment payments of POs on the water, until someone records otherwise.`,
-    `<b>K-Life</b>: the deposit is paid on the bulk (China stock) order; each shipment PO is one payment. When the bulk order is closed and its deposit reallocated to a shipment PO, that PO's amount is the full payment less the deposit (enter it on the line).`,
+    `<b>K-Life</b>: the deposit is paid on the bulk (China stock) order; each shipment PO is one payment. Which shipment PO the bulk deposit moves to is chosen by hand: on that PO, ✎ → <b>Bulk deposit reallocated from</b> (the bulk PO no.) and the line becomes the full payment less the deposit. Until a paid bulk deposit is moved, every unpaid K-Life shipment line is flagged CHECK.`,
     `<b>Timing from team history</b> is used only when the team's past payment dates are consistent (within ±10 days); otherwise the master-data terms or the default apply (e.g. Rizhao Pioneer).`,
     `<b>Filters</b>: ETA filters on the forwarder ETA, or the Cin7 ETA when there is none. Totals and the Excel export follow every filter.`,
     s.no_terms&&s.no_terms.length?`<b>No payment terms in master-data</b> (defaulted to full payment 7 days before ETA): ${s.no_terms.map(esc).join(", ")}.`:"",
@@ -781,7 +785,7 @@ function renderSpecRules(){
   const sp=Object.entries(SPECIAL||{}).map(([s,v])=>`<li><b>${esc(s)}</b>: ${esc(v.rule||"")}</li>`).join("");
   $("#specRules").innerHTML=`<ul class="notes">
       <li><b>Pay runs</b>: Tuesday for supplier payments and USD freight; Thursday for AUD charges. A line still unpaid after its run moves to the next one (↻).</li>
-      <li><b>K-Life bulk orders</b>: the deposit is requested on the bulk (China stock) order (purple, BULK); each shipment PO is one payment; the PO the bulk deposit is reallocated to pays the rest.</li>
+      <li><b>K-Life bulk orders</b>: the deposit is requested on the bulk (China stock) order (purple, BULK); each shipment PO is one payment; the PO the bulk deposit is moved to (✎ → Bulk deposit reallocated from) pays the rest, and K-Life lines are flagged CHECK until a paid bulk deposit is moved.</li>
       <li><b>New POs not yet approved in Cin7</b> are listed as Awaiting Approval and requested only once someone sets a payment request date.</li>
       <li><b>Planned request dates</b> move later with the due date when a PO slips by more than a week (⇢); a PO that comes forward is flagged, not moved. Deposits keep their date.</li>
       ${sp}</ul>

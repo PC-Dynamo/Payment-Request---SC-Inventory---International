@@ -304,6 +304,11 @@ def test_uat_16oct():
     check(rows[0]["request_date"] == "2026-10-20", "a plan earlier than the due date on purpose stays")
     rows, _ = P.merge([base], {"PO-80001|full": dict(plan, status="Requested")}, [], D("2026-10-17"), 4)
     check(rows[0]["request_date"] == "2026-10-20", "a line already sent to Accounts keeps its date")
+    cm = dict(base, line_id="PO-134847|balance", kind="balance", due_auto="2026-11-01")
+    rows, _ = P.merge([cm], {"PO-134847|balance": {"request_date": "2026-11-03", "plan_due": "2026-10-20"}},
+                      [], D("2026-10-28"), 4)
+    check(rows[0]["request_date"] == "2026-11-03" and not rows[0].get("replanned_from"),
+          "a plan already after the old due date is not pushed past the new one (Crossmax, 28 Oct)")
     early = {"request_date": "2026-11-03", "plan_due": "2026-11-10"}
     rows, _ = P.merge([dict(base, due_auto="2026-11-01")], {"PO-80001|full": early}, [], D("2026-10-26"), 4)
     check(rows[0]["request_date"] == "2026-11-03" and any("earlier" in f for f in rows[0]["flags"]),
@@ -458,9 +463,50 @@ def test_oct27():
     check((r3["balance_anchor"], r3["balance_offset"]) == ("etd", -11), "consistent history still sets the timing")
 
 
+def test_oct28():
+    """28 Oct (Rizqi): a K-Life bulk deposit is moved by hand to one shipment PO;
+    until it is, the shipment POs' payments are flagged."""
+    kl = "Xiamen K-Life Sport Co., Ltd"
+    common = {"source": "auto", "vendor": kl, "currency": "USD", "flags": [], "assumed_paid": None, "state": "VIC",
+              "segment": "Retail"}
+    bulk = dict(common, po="PO-135014", po_list=["PO-135014"], line_id="PO-135014|deposit", kind="deposit",
+                bulk=True, amount_auto=17127.0, due_auto="2026-08-27")
+    ship = [dict(common, po=p, po_list=[p], line_id=f"{p}|full", kind="full", bulk_dep_supplier=True,
+                 po_value_usd=v, amount_auto=v, due_auto="2026-12-20", pay_type="Full payment 100%")
+            for p, v in (("PO-142640", 15858.0), ("PO-142641", 22770.0), ("PO-142642", 10470.0))]
+    paid = {"PO-135014|deposit": {"status": "Paid", "paid_date": "2026-10-13", "paid_amount": 17127.0}}
+    rows, _ = P.merge([bulk, *ship], paid, [], D("2026-10-28"), 4)
+    by = {r["line_id"]: r for r in rows}
+    check(all("17,127.00" in by[f"{p}|full"]["review"] and "not allocated" in by[f"{p}|full"]["review"]
+              for p in ("PO-142640", "PO-142641", "PO-142642")),
+          "while the bulk deposit is not moved to a shipment PO, every K-Life shipment payment is flagged")
+    moved = {**paid, "PO-142641|full": {"bulk_from": "PO-135014"}}
+    rows, _ = P.merge([bulk, *ship], moved, [], D("2026-10-28"), 4)
+    by = {r["line_id"]: r for r in rows}
+    r = by["PO-142641|full"]
+    check(r["amount"] == 5643.0 and r["pay_type"] == "Full payment less bulk deposit" and not r.get("review"),
+          "the PO the deposit moved to pays the full payment less it (22,770 - 17,127)")
+    check(not by["PO-142640|full"].get("review") and not by["PO-142642|full"].get("review")
+          and by["PO-142640|full"]["amount"] == 15858.0, "once it is moved, nothing is flagged")
+    part = {**paid, "PO-142641|full": {"bulk_from": "PO-135014", "bulk_amount": 10000.0}}
+    rows, _ = P.merge([bulk, *ship], part, [], D("2026-10-28"), 4)
+    by = {r["line_id"]: r for r in rows}
+    check(by["PO-142641|full"]["amount"] == 12770.0 and "7,127.00" in by["PO-142640|full"]["review"],
+          "a deposit moved in part leaves the rest flagged")
+    rows, _ = P.merge([bulk, *ship], {}, [], D("2026-10-28"), 4)
+    check(not any(r.get("review") for r in rows if not r.get("bulk")), "an unpaid bulk deposit flags nothing")
+    check(L.clean("bulk_from", "135014") == "PO-135014" and L.clean("bulk_from", "po 135014") == "PO-135014",
+          "bulk deposit PO number tidied")
+    try:
+        L.clean("bulk_from", "the bulk one")
+        check(False, "a bulk deposit PO that is not a PO number is accepted")
+    except ValueError:
+        pass
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
-               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_data):
+               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

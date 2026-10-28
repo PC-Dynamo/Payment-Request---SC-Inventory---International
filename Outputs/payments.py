@@ -58,6 +58,8 @@ TIMING_MAD_MAX = 10
 # (PO-131113, 26 Oct). A deposit or in-advance payment follows the PI, not the
 # ship dates: its PO date moves when a draft is approved (VOG PO-140079).
 REPLAN_MIN_DAYS = 7
+# A paid bulk-order deposit older than this is no longer chased onto shipment POs.
+BULK_WAIT_DAYS = 180
 
 
 def _d(s) -> dt.date | None:
@@ -297,6 +299,9 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             "stage": "Bulk (China stock)" if bulk else po.get("stage"),
             "stage_raw": po.get("stage_raw"),
             "bulk": bulk,
+            # A shipment PO of a bulk-deposit supplier (K-Life): one payment, less
+            # a bulk order's deposit if it was moved to this PO.
+            "bulk_dep_supplier": bool(not bulk and is_bulk_dep(po["supplier"])),
             "entry_date": po.get("po_date"),
             "supplier_invoice": po.get("supplier_invoice"),
             "etd": _s(etd), "etd_estimated": etd_est,
@@ -389,6 +394,62 @@ def _po_context(auto: list[dict]) -> dict[str, dict]:
     return ctx
 
 
+def _bulk_deposits(auto: list[dict], states: dict, today: dt.date) -> tuple[dict, dict]:
+    """K-Life: deposits paid (or requested) on bulk orders - open, or since closed
+    or voided - and what is still waiting to be moved to a shipment PO. There is
+    no long-term deposit with K-Life: each one goes to a shipment PO, chosen by
+    hand (Rizqi, 28 Oct 2026).
+    -> ({bulk PO: {key, amount, when}}, {bulk PO: {key, left}})"""
+    paid = {}
+    for ln in auto:
+        if not (ln.get("bulk") and ln["kind"] == "deposit"):
+            continue
+        st = states.get(ln["line_id"]) or {}
+        if not (st.get("status") in ("Paid", "Requested") or st.get("paid_date")):
+            continue
+        v = st.get("paid_amount") if st.get("paid_amount") is not None else st.get("amount")
+        paid[ln["po"]] = {"key": M._key(ln["vendor"]), "amount": float(v if v is not None else ln["amount_auto"] or 0),
+                          "when": _d(st.get("paid_date") or st.get("request_date"))}
+    used: dict[str, float] = {}
+    for st in states.values():
+        ref = st.get("bulk_from")
+        if ref:
+            amt = st.get("bulk_amount") if st.get("bulk_amount") is not None else (paid.get(ref) or {}).get("amount")
+            used[ref] = used.get(ref, 0.0) + float(amt or 0)
+    waiting = {}
+    for ref, b in paid.items():
+        left = round(b["amount"] - used.get(ref, 0.0), 2)
+        if left > 0.01 and (not b["when"] or (today - b["when"]).days <= BULK_WAIT_DAYS):
+            waiting[ref] = {"key": b["key"], "left": left}
+    return paid, waiting
+
+
+def _less_bulk_deposit(row: dict, st: dict, auto_amt: float, bulk_paid: dict, waiting: dict) -> float:
+    """A K-Life shipment PO's one payment: less the bulk deposit someone moved to
+    it; flagged while a paid bulk deposit has not been moved to any PO yet."""
+    ref = st.get("bulk_from")
+    row["bulk_from"], row["bulk_amount_stored"] = ref, st.get("bulk_amount")
+    if ref:
+        amt = st.get("bulk_amount") if st.get("bulk_amount") is not None else (bulk_paid.get(ref) or {}).get("amount")
+        if amt is None:
+            row["flags"] = [*row["flags"], f"no paid deposit on record for bulk order {ref} - enter the amount moved"]
+            return auto_amt
+        row["bulk_deposit"] = float(amt)
+        row["amount_basis"] = f"PO value less the deposit paid on bulk order {ref}"
+        row["flags"] = [*row["flags"], f"less USD {float(amt):,.2f} deposit paid on bulk order {ref}"]
+        return round(max(0.0, float(row.get("po_value_usd") or 0) - float(amt)), 2)
+    if st.get("status") in ("Paid", "Requested", "Not Payable"):
+        return auto_amt
+    pend = [(r, w["left"]) for r, w in sorted(waiting.items()) if w["key"] == M._key(row.get("vendor") or "")]
+    if pend:
+        txt = ("; ".join(f"USD {left:,.2f} deposit paid on bulk order {r}" for r, left in pend)
+               + " is not allocated to a shipment PO yet - if it was moved to this PO, enter it under "
+                 "Bulk deposit reallocated from (✎)")
+        row["review"] = txt
+        row["flags"] = [*row["flags"], txt]
+    return auto_amt
+
+
 def _paid_fields(row: dict, st: dict) -> None:
     """Accounts' paid currency and the AUD a payment cost. Once a paid amount is
     in, the currency defaults to the line's own; paid in AUD, the AUD is the
@@ -421,8 +482,15 @@ def replanned(row: dict, st: dict, due: dt.date | None, today: dt.date,
         return st
     if shift <= REPLAN_MIN_DAYS:
         return st
-    new = request_day_for(req + dt.timedelta(days=shift), today,
-                          weekdays_for(row.get("currency"), pay_weekdays))
+    # Move by the slip, but never past the pay run for the new due date - a plan
+    # already later than the old due date would otherwise land after it (bug
+    # check 28 Oct: Crossmax balances planned 3 Nov went to 10 / 17 Nov, past
+    # their new due dates and ETDs) - and never earlier than planned.
+    wd = weekdays_for(row.get("currency"), pay_weekdays)
+    new = max(req, min(request_day_for(req + dt.timedelta(days=shift), today, wd),
+                       request_day_for(due, today, wd)))
+    if new == req:
+        return st
     row["replanned_from"] = _s(req)
     row["flags"] = [*(row.get("flags") or []),
                     f"request date moved from {req:%d/%m} to {new:%d/%m}: the due date moved "
@@ -513,6 +581,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
             v = st.get("paid_amount") if st.get("paid_amount") is not None else st.get("amount")
             if v is not None and (st.get("currency") or "USD") == "USD":
                 dep_actual[ln["po"]] = float(v)
+    bulk_paid, waiting = _bulk_deposits(auto, states, today)
     for ln in auto:
         st = states.get(ln["line_id"], {})
         if not st and ln["kind"] == "full" and f"{ln['po']}|deposit" not in states:
@@ -525,10 +594,13 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
         if ln["kind"] == "balance" and ln["po"] in dep_actual and ln.get("po_value_usd"):
             auto_amt = round(max(0.0, float(ln["po_value_usd"]) - dep_actual[ln["po"]]), 2)
             row["amount_basis"] = "PO value less the deposit recorded"
+        if ln.get("bulk_dep_supplier") and ln["kind"] == "full":
+            auto_amt = _less_bulk_deposit(row, st, auto_amt, bulk_paid, waiting)
         row["amount"] = st["amount"] if st.get("amount") is not None else auto_amt
         row["amount_overridden"] = st.get("amount") is not None
         row["invoice_no"] = st.get("invoice_no") or ""
-        row["pay_type"] = st.get("pay_type") or ln.get("pay_type", "")
+        row["pay_type"] = st.get("pay_type") or (
+            "Full payment less bulk deposit" if row.get("bulk_deposit") else ln.get("pay_type", ""))
         row["pay_type_overridden"] = bool(st.get("pay_type"))
         row["supplier"] = ln.get("vendor", "")
         row["vendor_entity"] = st.get("vendor_entity") or ln.get("vendor", "")
