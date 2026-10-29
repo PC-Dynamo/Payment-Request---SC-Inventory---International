@@ -513,6 +513,11 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
         nxt_l = next_request_day(today, wd)       # this line's next pay run
         req = _d(st.get("request_date"))
         status = st.get("status")
+        if st.get("paid_date") and status != "Not Payable":
+            # A paid date is a payment, whatever the status cell still says
+            # (Accounts, 29 Oct: 23 lines paid 27 Oct were left "For Payment"
+            # and moved to the 3 Nov run).
+            status = "Paid"
         if not status and row.get("awaiting_approval"):
             if req is None:
                 status = "Awaiting Approval"

@@ -504,9 +504,31 @@ def test_oct28():
         pass
 
 
+def test_oct29():
+    """29 Oct (Accounts, Arlene): a paid date marks the line Paid."""
+    base = {"source": "auto", "po": "PO-91001", "po_list": ["PO-91001"], "vendor": "X", "state": "QLD",
+            "segment": "Retail", "currency": "USD", "flags": [], "assumed_paid": None, "kind": "full",
+            "line_id": "PO-91001|full", "amount_auto": 3102.4, "due_auto": "2026-10-13"}
+    st = {"request_date": "2026-10-27", "paid_date": "2026-10-27", "paid_amount": 3102.4, "paid_amount_aud": 4447.89}
+    rows, _ = P.merge([base], {"PO-91001|full": st}, [], D("2026-10-29"), 4)
+    r = rows[0]
+    check(r["status"] == "Paid" and r["request_date"] == "2026-10-27" and not r["carried_from"]
+          and not r["this_request"] and not r["overdue"],
+          "a line with a paid date is Paid on its own run, not carried to the next one")
+    rows, _ = P.merge([base], {"PO-91001|full": dict(st, status="For Payment")}, [], D("2026-10-29"), 4)
+    check(rows[0]["status"] == "Paid", "the paid date wins over a status left on For Payment")
+    rows, _ = P.merge([base], {"PO-91001|full": dict(st, status="Not Payable")}, [], D("2026-10-29"), 4)
+    check(rows[0]["status"] == "Not Payable", "Not Payable stays Not Payable")
+    man = [{"id": 5, "po_refs": "PO-123515", "pay_type": "Freight Payment", "currency": "USD", "amount": 2500.0,
+            "due_date": "2026-10-27", "request_date": "2026-10-27", "status": None, "paid_date": "2026-10-27",
+            "paid_amount": 2500.0}]
+    rows, _ = P.merge([], {}, man, D("2026-10-29"), 4)
+    check(rows[0]["status"] == "Paid" and rows[0]["request_date"] == "2026-10-27", "the same for a line added by hand")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
-               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_data):
+               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")
