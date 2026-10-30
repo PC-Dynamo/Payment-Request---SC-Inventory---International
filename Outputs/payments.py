@@ -629,6 +629,8 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
         tidy = bname.get(tk) or (next((v for k, v in sorted(bname.items())
                                       if len(tk) >= 5 and k.startswith(tk)), "") if tk else "")
         branch = tidy or typed or first.get("branch") or ""
+        sups = [s for s in dict.fromkeys(ctx[p].get("supplier") or ctx[p].get("vendor") or "" for p in pos if p in ctx)
+                if s]
         state = (m.get("state") or bstate.get(M._key(branch)) or first.get("state")
                  or next((v for k, v in bstate.items() if len(k) >= 5 and M._key(branch)
                           and k.startswith(M._key(branch))), ""))
@@ -656,8 +658,10 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
             "forwarder": first.get("forwarder") or "",
             "terms_rule": "", "flags": [],
             "invoice_no": m.get("doc_no") or "",
-            "supplier": ", ".join(dict.fromkeys(ctx[p].get("supplier") or ctx[p].get("vendor") or ""
-                                                for p in pos if p in ctx) ).strip(", "),
+            "supplier": ", ".join(sups),
+            # Kept as a list too: names contain ", " themselves ("Xiamen K-Life
+            # Sport Co., Ltd"), so the joined text cannot be split back (Rizqi, 30 Oct).
+            "suppliers": sups,
             "acc_scheduled_date": m.get("acc_scheduled_date"),
             "paid_amount": m.get("paid_amount"),
             "pct": None,

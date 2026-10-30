@@ -526,9 +526,32 @@ def test_oct29():
     check(rows[0]["status"] == "Paid" and rows[0]["request_date"] == "2026-10-27", "the same for a line added by hand")
 
 
+def test_oct30():
+    """30 Oct (Rizqi): supplier names with ", " in them; vendors from a list."""
+    import build_report as BR
+    kl = "Xiamen K-Life Sport Co., Ltd"
+    auto = [{"source": "auto", "po": "PO-142641", "po_list": ["PO-142641"], "line_id": "PO-142641|full",
+             "kind": "full", "vendor": kl, "currency": "USD", "flags": [], "assumed_paid": None,
+             "amount_auto": 1.0, "due_auto": "2026-12-20", "state": "VIC", "segment": "Retail"}]
+    man = [{"id": 3, "po_refs": "PO-142641", "pay_type": "Freight Payment", "currency": "USD", "amount": 9.0,
+            "due_date": None, "status": None, "vendor": "Mainfreight"}]
+    rows, _ = P.merge(auto, {}, man, D("2026-10-30"), 4)
+    m = [r for r in rows if r["source"] == "manual"][0]
+    check(m["suppliers"] == [kl] and m["supplier"] == kl,
+          "a manual line keeps its POs' suppliers as a list (K-Life's name is not split at ', ')")
+    check(L.clean("vendor", "Zhejiang Elina Fitness  Technology Co., Ltd")
+          == "Zhejiang Elina Fitness Technology Co., Ltd", "pasted non-breaking spaces are tidied")
+    cache = {"pos": {"PO-1": {"supplier": kl, "ship": {"forwarder": "Mainfreight"}},
+                     "PO-2": {"supplier": "Zhejiang Elina Fitness Technology Co Ltd", "ship": {}}}}
+    v = BR.vendor_names(cache, [{"vendor": "Zhejiang Elina Fitness Technology Co., Ltd"},
+                                {"vendor": "mainfreight"}, {"vendor": "Intenza"}, {"vendor": ""}])
+    check(v == ["Intenza", "Mainfreight", kl, "Zhejiang Elina Fitness Technology Co Ltd"],
+          f"one spelling per vendor, Cin7's first: {v}")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
-               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_data):
+               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

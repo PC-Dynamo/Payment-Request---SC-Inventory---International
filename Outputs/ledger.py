@@ -185,7 +185,10 @@ def clean(field: str, value):
         v = (value or "").strip()
         return v[:60] or None
     v = "" if value is None else str(value).strip()
-    return v[:600] if field == "comment" else v[:200]
+    if field == "comment":
+        return v[:600]
+    # Names pasted from e-mails carry non-breaking spaces ("Zhejiang\xa0Elina...").
+    return re.sub(r"\s+", " ", v.replace("\xa0", " "))[:200]
 
 
 def _audit(con, who: str, action: str, line_id: str, detail: dict) -> None:

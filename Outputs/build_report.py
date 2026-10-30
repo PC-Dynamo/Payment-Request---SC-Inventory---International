@@ -64,6 +64,24 @@ def effective_state(ln: dict, states: dict) -> dict:
     return states.get(ledger_id(ln, states)) or {}
 
 
+def vendor_names(cache: dict, manual: list[dict]) -> list[str]:
+    """Who a line added by hand can be paid to: the forwarders / brokers, the
+    international suppliers Cin7 has POs for, and every vendor used on such a
+    line before - one spelling each, Cin7's where there is one (Rizqi, 30 Oct:
+    the field took any text)."""
+    import re
+    seen: dict[str, str] = {}
+    pos = (cache.get("pos") or {}).values()
+    names = ([(p.get("ship") or {}).get("forwarder") for p in pos] + [p.get("supplier") for p in pos]
+             + [m.get("vendor") for m in manual])
+    for name in names:
+        name = re.sub(r"\s+", " ", str(name or "")).strip()
+        key = re.sub(r"[^a-z0-9]", "", name.lower())
+        if key and key not in seen:
+            seen[key] = name
+    return sorted(seen.values(), key=str.lower)
+
+
 def is_payment_record(st: dict) -> bool:
     """A real payment record (sent, paid or written off) - worth keeping forever."""
     return bool(st and (st.get("status") in ("Paid", "Requested", "Not Payable")
@@ -135,6 +153,7 @@ def build_payload() -> dict:
             "statuses": L.STATUSES,
             "currencies": L.CURRENCIES,
             "paid_currencies": L.PAID_CURRENCIES,
+            "vendors": vendor_names(cache, L.all_manual()),
             "charge_types": L.CHARGE_TYPES,
         },
         "auto_lines": auto,

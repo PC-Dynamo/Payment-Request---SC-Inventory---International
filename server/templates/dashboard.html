@@ -301,9 +301,32 @@ function payTypes(){
   const s=new Set([...Object.keys(META.charge_types||{}),...DATA.map(r=>r.pay_type).filter(Boolean)]);
   return [...s].sort((a,b)=>a.localeCompare(b));
 }
+const nm=s=>String(s||"").replace(/\s+/g," ").trim();          // pasted names carry non-breaking spaces
+const keyOf=s=>nm(s).toLowerCase().replace(/[^a-z0-9]/g,"");
 function suppliers(){
-  const s=new Set();DATA.forEach(r=>{if(r.source==="auto")s.add(r.supplier);else{if(r.vendor_entity)s.add(r.vendor_entity);(r.supplier||"").split(", ").filter(Boolean).forEach(x=>s.add(x))}});
+  // A manual line lists its POs' suppliers as an array: names contain ", " ("Xiamen K-Life Sport Co., Ltd").
+  const s=new Set();DATA.forEach(r=>{if(r.source==="auto")s.add(nm(r.supplier));else{s.add(nm(r.vendor_entity));(r.suppliers||[]).forEach(x=>s.add(nm(x)))}});
   return [...s].filter(Boolean).sort((a,b)=>a.localeCompare(b));
+}
+function vendorList(){
+  // One spelling per vendor: the server's list (forwarders, Cin7 suppliers, vendors used before) + new ones since.
+  const seen=new Map();[...(META.vendors||[]),...DATA.filter(r=>r.source==="manual").map(r=>r.vendor_entity)].forEach(v=>{v=nm(v);const k=keyOf(v);if(k&&!seen.has(k))seen.set(k,v)});
+  return [...seen.values()].sort((a,b)=>a.localeCompare(b));
+}
+function vendorField(cur){
+  const list=vendorList(),k=keyOf(cur);let v=list.find(x=>keyOf(x)===k)||"";
+  if(k&&!v){list.push(nm(cur));v=nm(cur)}
+  return field("vendor","Vendor entity / service provider",v,"",[["","(the PO's forwarder)"],...list.map(x=>[x,x]),["__new__","+ New vendor…"]]);
+}
+function bindVendor(){
+  const s=$("#dBody select[name=vendor]");if(!s)return;let last=s.value;
+  s.onchange=()=>{
+    if(s.value!=="__new__"){last=s.value;return}
+    const n=nm(prompt("New vendor / service provider, as on their invoice:")||"");
+    if(!n){s.value=last;return}
+    const hit=[...s.options].find(o=>o.value!=="__new__"&&o.value&&keyOf(o.value)===keyOf(n));
+    if(hit)s.value=hit.value;else{s.add(new Option(n,n),s.options[s.options.length-1]);s.value=n}
+    last=s.value};
 }
 function buildFilters(){
   seg("#fWin",[["request","Next pay run"],["window",`${META.forecast_weeks}-week rolling`],["open","All unpaid"],["all","All incl. paid"]],"win");
@@ -339,7 +362,7 @@ function passBase(r){  // every filter except the Show window (KPI cards are win
   if(F.payee&&r.payee!==F.payee)return false;
   if(F.fin==="no"&&!r.not_final)return false;
   if(F.fin==="yes"&&(r.not_final||["Paid","Not Payable"].includes(r.status)))return false;
-  if(F.sup&&!(r.supplier===F.sup||r.vendor_entity===F.sup||(r.supplier||"").split(", ").includes(F.sup)))return false;
+  if(F.sup&&!(nm(r.supplier)===F.sup||nm(r.vendor_entity)===F.sup||(r.suppliers||[]).map(nm).includes(F.sup)))return false;
   if(F.stage&&r.stage!==F.stage)return false;
   if(F.status&&statusLabel(r)!==F.status)return false;
   if(F.type&&r.pay_type!==F.type)return false;
@@ -532,7 +555,7 @@ function copyLine(id){
   const r=DATA.find(x=>x.line_id===id);if(!r)return;CUR={mode:"new"};
   const seed={...r,invoice_no:"",comment:"",due_date:"",request_stored:"",status_stored:"",acc_scheduled_date:"",
     paid_date:"",paid_amount:null,paid_currency:"",paid_currency_default:false,paid_amount_aud:null,paid_aud_default:false};
-  openDrawer(`New line from ${r.po||"a manual line"} — ${r.pay_type}`,manualForm(seed),false);
+  openDrawer(`New line from ${r.po||"a manual line"} — ${r.pay_type}`,manualForm(seed),false);bindVendor();
   const t=$("#dBody select[name=pay_type]"),c=$("#dBody select[name=currency]");t.onchange=()=>{if(META.charge_types[t.value])c.value=META.charge_types[t.value]};
 }
 $("#tbl").addEventListener("change",async e=>{
@@ -636,13 +659,14 @@ function openLine(id){
       ${field("paid_amount_aud","Paid amount (AUD)",r.paid_aud_default?"":r.paid_amount_aud,"number")}
       ${field("comment","Comment",r.comment,"textarea")}</div>`:manualForm(r);
   openDrawer(`${r.po||"Manual line"} — ${r.pay_type}`,facts+form,r.source==="manual");
+  bindVendor();
 }
 function manualForm(r){
   r=r||{};
   return poDatalist()+`<div class="form">
     ${field("pay_type","Payment type",r.pay_type||"Customs Brokerage","",typeOptions(r.pay_type))}
     ${field("currency","Currency",r.currency||"AUD","",META.currencies)}
-    ${field("vendor","Vendor entity / service provider",r.vendor_entity)}
+    ${vendorField(r.vendor_entity)}
     ${field("po_refs","PO number(s)",r.source==="manual"?r.po:"")}
     ${field("invoice_no","Document / invoice no.",r.invoice_no)}
     ${field("amount","Amount",r.amount,"number")}
@@ -660,7 +684,7 @@ function manualForm(r){
     ${field("comment","Comment",r.comment,"textarea")}</div>
     <p class="muted" style="font-size:11.5px">Several POs: separate with commas. Branch, state and channel come from the first PO when left blank.</p>`;
 }
-$("#bAdd").onclick=()=>{CUR={mode:"new"};openDrawer("Add payment line (AUD charge, freight, other)",manualForm(null),false);
+$("#bAdd").onclick=()=>{CUR={mode:"new"};openDrawer("Add payment line (AUD charge, freight, other)",manualForm(null),false);bindVendor();
   const t=$("#dBody select[name=pay_type]"),c=$("#dBody select[name=currency]");t.onchange=()=>{if(META.charge_types[t.value])c.value=META.charge_types[t.value]}};
 function formData(){const o={};$("#dBody").querySelectorAll("input,select,textarea").forEach(e=>{if(e.name)o[e.name]=e.value});return o}
 $("#dSave").onclick=async()=>{
