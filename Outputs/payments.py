@@ -6,7 +6,7 @@ Two steps, deliberately separate:
 
   auto_lines(cache, ...)   Cin7-derived. One line per payment milestone of every
                            open international PO (deposit / balance / full).
-                           Rebuilt on each refresh (Mon + Wed 13:00 AWST).
+                           Rebuilt on each refresh (Fri 08:00 + Mon 12:00 AWST).
   merge(auto, ledger, day) Today-dependent. Applies what people recorded, works
                            out each line's payment-request date and status, and
                            adds the manual (AUD) lines. Runs on every page load,
@@ -27,7 +27,7 @@ import terms as T
 # Pay runs, as the team actually runs them (payment workbook, Jul-Oct 2026):
 # supplier payments and USD freight go in the TUESDAY run (339 of 342 rows),
 # AUD document / handling charges in the THURSDAY run (230 of 238 rows).
-# The app's data refresh (Mon + Wed 13:00 AWST, the afternoon before each run)
+# The app's data refresh (Fri 08:00 + Mon 12:00 AWST, after the Cin7 ETA updates)
 # is a separate schedule.
 PAY_WEEKDAYS = {"USD": (1,), "GBP": (1,), "EUR": (1,), "AUD": (3,)}
 DEFAULT_PAY_WEEKDAYS = (1,)

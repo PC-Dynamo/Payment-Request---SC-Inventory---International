@@ -51,8 +51,8 @@ Live: <https://sc.dynamofitness.au/Applications/payment-request/>
 - **Payment history is kept** after Cin7 receives a PO: every line with a
   recorded payment (paid, requested or not payable) is archived, so the register
   and the backup do not lose it when the PO leaves Cin7's open list.
-- **OneDrive backup** every Wednesday 16:30 AWST, after Accounts has recorded the
-  week's payments in the app (no later than Wednesday): *Payment Request for Four-week Rolling Forecast - Claude.ai Latest.xlsx*
+- **OneDrive backup** every Wednesday and Friday 16:30 AWST - Wednesday after Accounts
+  has recorded the week's payments in the app (no later than Wednesday): *Payment Request for Four-week Rolling Forecast - Claude.ai Latest.xlsx*
   in General - Supply Chain / 1. Excel / Procurement Reports, replacing the last
   copy. Its first sheet, `updated`, has the same layout as the team's manual
   workbook, so reports built on that workbook can be pointed at it.
@@ -61,7 +61,7 @@ Live: <https://sc.dynamofitness.au/Applications/payment-request/>
 
 | Data | Source | Refresh |
 |---|---|---|
-| Open POs, AUD value, stage, branch | Cin7 v1 API, **read-only**, `modifiedDate` delta only | Mon + Wed 13:00 AWST (afternoon before each pay run) |
+| Open POs, AUD value, stage, branch | Cin7 v1 API, **read-only**, `modifiedDate` delta only | Fri 08:00 + Mon 12:00 AWST (after the team's Cin7 ETA updates; SC updates the app by Mon 13:00) |
 | USD value | qty × Cin7 `costUSD`, pinned per PO line when first seen | with the POs; product costs weekly |
 | ETA to port, ETD, container, forwarder | Shipment Schedule cache `/srv/team/sc/shipment-schedule` | it rebuilds Mon + Thu 14:00 AWST |
 | Payment terms | SC Master Data cache `/srv/team/sc/master-data` | **weekly** (Monday run) |
@@ -109,9 +109,9 @@ Outputs/
   selftest.py           rules + data checks
   overrides.json        special arrangements, aliases, transit weeks
 server/                 Flask app, template, Dockerfile, compose
-refresh-payment.sh      the Mon/Wed cron job
+refresh-payment.sh      the Fri 08:00 / Mon 12:00 cron job
 sync-workbook.sh        import the team's live workbook from SharePoint (on request)
-upload-onedrive.sh      the Wednesday 16:30 OneDrive backup
+upload-onedrive.sh      the Wed / Fri 16:30 OneDrive backup
 ```
 
 ## Run locally (Windows)
@@ -140,10 +140,10 @@ docker exec payment-request-app-1 python /app/Outputs/build_report.py
   with `/_authz`, so access is granted per person on the admin page (slug
   `payment-request`).
 - Cin7 credentials come from the Shipment Schedule app's `server/.env`.
-- Cron (UTC; 13:00 AWST Mon/Wed = 05:00 UTC Mon/Wed):
-  `0 5 * * 1,3 /srv/team/sc/payment-request/refresh-payment.sh`
-- Monday 13:00 runs before the Shipment Schedule's 14:00 ETA re-read; the app moves
+- Cron (UTC; 08:00 AWST Fri = 00:00 UTC Fri, 12:00 AWST Mon = 04:00 UTC Mon):
+  `0 0 * * 5` and `0 4 * * 1 /srv/team/sc/payment-request/refresh-payment.sh`
+- Monday 12:00 runs before the Shipment Schedule's 14:00 ETA re-read; the app moves
   forwarder ETAs by any change in Cin7's own ETA to bridge that hour.
-- OneDrive backup cron (UTC; 16:30 AWST Wed = 08:30 UTC):
-  `30 8 * * 3 /srv/team/sc/payment-request/upload-onedrive.sh` (log: `upload.log`)
+- OneDrive backup cron (UTC; 16:30 AWST Wed + Fri = 08:30 UTC):
+  `30 8 * * 3,5 /srv/team/sc/payment-request/upload-onedrive.sh` (log: `upload.log`)
 - Back up `Outputs/ledger.db`: it is the only data here that cannot be rebuilt from Cin7.

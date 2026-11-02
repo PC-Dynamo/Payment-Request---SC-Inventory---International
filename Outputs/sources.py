@@ -5,7 +5,7 @@ sources.py - the two caches this app reads from sibling SC apps on 170.64.233.18
   shipment-schedule  /srv/team/sc/shipment-schedule/Outputs/shipment_cache.json
                      ETA to port (forwarder), Cin7 ETA, ETD, container, forwarder.
                      Rebuilt Mon + Thu 14:00 AWST after the team updates ETAs in
-                     Cin7. This app refreshes Mon + Wed 13:00 AWST and bridges the
+                     Cin7. This app refreshes Fri 08:00 + Mon 12:00 AWST and bridges the
                      gap to Monday's 14:00 run with Cin7's live ETA (payments.py).
   master-data        /srv/team/sc/master-data/data/cache/master_snapshot.json
                      Supplier payment terms. Re-read WEEKLY into
