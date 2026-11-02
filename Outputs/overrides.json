@@ -5,7 +5,8 @@
    "deposit_pct": 25,
    "anchor": "etd",
    "offset_days": -7,
-   "rule": "25% deposit on PO date; 75% balance before shipment - 7 days before ETD (from the payment workbook: Watson has no terms in master-data)"
+   "currency": "GBP",
+   "rule": "25% deposit on PO date; 75% balance before shipment - 7 days before ETD; invoiced in GBP (from the payment workbook: Watson has no terms in master-data)"
   },
   "Qingdao Great Century Plastic Co.,Ltd": {
    "deposit_pct": 0,

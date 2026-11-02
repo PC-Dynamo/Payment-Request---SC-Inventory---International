@@ -367,14 +367,22 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             elif (po.get("stage_raw") in SHIPPED_STAGES and
                   (anchor == "order" or (anchor == "etd" and offset < 0))):
                 assumed = f"pre-shipment payment assumed paid - PO is {po.get('stage')}"
+            est = round(usd * pct / 100.0, 2)
+            # A supplier invoicing in another currency (Watson: GBP) gets lines
+            # in that currency; Cin7 only has USD costs, so the amount comes
+            # from the PI (Idelyn, 31 Oct).
+            cur = str((sp or {}).get("currency") or "USD").upper()
             lines.append({
                 **base,
                 "line_id": f"{ref}|{kind}",
                 "kind": kind,
                 "pay_type": label,
                 "pct": pct,
-                "currency": "USD",
-                "amount_auto": round(usd * pct / 100.0, 2),
+                "currency": cur,
+                "amount_auto": est if cur == "USD" else 0.0,
+                **({} if cur == "USD" else {"flags": [
+                    *flags, f"{po['supplier']} invoices in {cur}: enter the {cur} amount from the PI "
+                            f"(Cin7's cost estimate is USD {est:,.2f})"]}),
                 "due_auto": _s(due),
                 "due_anchor": anchor,
                 "assumed_paid": assumed,
@@ -475,6 +483,12 @@ def replanned(row: dict, st: dict, due: dt.date | None, today: dt.date,
             or st.get("status") in ("Requested", "Paid", "Not Payable"):
         return st
     shift = (due - base).days
+    etd = _d(row.get("etd"))
+    if shift > REPLAN_MIN_DAYS and etd and not row.get("etd_estimated") and req <= etd:
+        # Not shipped yet, and planned for before it ships: a later arrival
+        # does not delay a payment made before shipment (2 Nov: Imbell PO-130210,
+        # planned 3 Nov, ETD 3 Nov, forwarder ETA moved 13 days later).
+        return st
     if shift < -REPLAN_MIN_DAYS:
         row["flags"] = [*(row.get("flags") or []),
                         f"the due date moved {-shift} days earlier after the request date was "
@@ -584,7 +598,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
         if ln["kind"] == "deposit":
             st = states.get(ln["line_id"], {})
             v = st.get("paid_amount") if st.get("paid_amount") is not None else st.get("amount")
-            if v is not None and (st.get("currency") or "USD") == "USD":
+            if v is not None and (st.get("currency") or ln["currency"]) == "USD":
                 dep_actual[ln["po"]] = float(v)
     bulk_paid, waiting = _bulk_deposits(auto, states, today)
     for ln in auto:

@@ -45,6 +45,16 @@ CHARGE_TYPES = {                       # type -> default currency
     "Other": "AUD",
 }
 
+def default_currency(pay_type: str | None) -> str:
+    """A charge type's own currency; a supplier payment typed by hand (full
+    payment / deposit / balance) is USD - the Elina spare parts went in as AUD
+    (Idelyn, 31 Oct); anything else AUD."""
+    pt = str(pay_type or "")
+    if pt in CHARGE_TYPES:
+        return CHARGE_TYPES[pt]
+    return "USD" if re.match(r"\s*(full payment|deposit|balance|bulk deposit)", pt, re.I) else "AUD"
+
+
 _LOCK = threading.Lock()
 
 SCHEMA = """
@@ -356,7 +366,7 @@ def add_manual(data: dict, who: str, seed_key: str | None = None) -> int | None:
     if vals["amount"] is None:
         raise ValueError("amount is required")
     if not vals["currency"]:
-        vals["currency"] = CHARGE_TYPES.get(vals["pay_type"], "AUD")
+        vals["currency"] = default_currency(vals["pay_type"])
     vals["entry_date"] = vals["entry_date"] or dt.datetime.now(AWST).date().isoformat()
     with connect() as con:
         if seed_key and con.execute("SELECT 1 FROM manual_line WHERE seed_key = ?",

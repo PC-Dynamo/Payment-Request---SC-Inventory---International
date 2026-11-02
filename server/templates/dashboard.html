@@ -318,6 +318,13 @@ function vendorField(cur){
   if(k&&!v){list.push(nm(cur));v=nm(cur)}
   return field("vendor","Vendor entity / service provider",v,"",[["","(the PO's forwarder)"],...list.map(x=>[x,x]),["__new__","+ New vendor…"]]);
 }
+function bindTypeCurrency(){
+  // A charge type has its own currency; a supplier payment typed by hand (full payment,
+  // deposit, balance) is USD - the Elina spare parts went in as AUD (31 Oct).
+  const t=$("#dBody select[name=pay_type]"),c=$("#dBody select[name=currency]");if(!t||!c)return;
+  t.onchange=()=>{if(META.charge_types[t.value])c.value=META.charge_types[t.value];
+    else if(/^\s*(full payment|deposit|balance|bulk deposit)/i.test(t.value))c.value="USD"};
+}
 function bindVendor(){
   const s=$("#dBody select[name=vendor]");if(!s)return;let last=s.value;
   s.onchange=()=>{
@@ -556,7 +563,7 @@ function copyLine(id){
   const seed={...r,invoice_no:"",comment:"",due_date:"",request_stored:"",status_stored:"",acc_scheduled_date:"",
     paid_date:"",paid_amount:null,paid_currency:"",paid_currency_default:false,paid_amount_aud:null,paid_aud_default:false};
   openDrawer(`New line from ${r.po||"a manual line"} — ${r.pay_type}`,manualForm(seed),false);bindVendor();
-  const t=$("#dBody select[name=pay_type]"),c=$("#dBody select[name=currency]");t.onchange=()=>{if(META.charge_types[t.value])c.value=META.charge_types[t.value]};
+  bindTypeCurrency();
 }
 $("#tbl").addEventListener("change",async e=>{
   if(e.target.classList.contains("sel")){e.target.checked?selected.add(e.target.dataset.id):selected.delete(e.target.dataset.id);updSubmit();return}
@@ -685,7 +692,7 @@ function manualForm(r){
     <p class="muted" style="font-size:11.5px">Several POs: separate with commas. Branch, state and channel come from the first PO when left blank.</p>`;
 }
 $("#bAdd").onclick=()=>{CUR={mode:"new"};openDrawer("Add payment line (AUD charge, freight, other)",manualForm(null),false);bindVendor();
-  const t=$("#dBody select[name=pay_type]"),c=$("#dBody select[name=currency]");t.onchange=()=>{if(META.charge_types[t.value])c.value=META.charge_types[t.value]}};
+  bindTypeCurrency()};
 function formData(){const o={};$("#dBody").querySelectorAll("input,select,textarea").forEach(e=>{if(e.name)o[e.name]=e.value});return o}
 $("#dSave").onclick=async()=>{
   if(!CUR)return;const d=formData();$("#dErr").textContent="";

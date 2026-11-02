@@ -549,9 +549,41 @@ def test_oct30():
           f"one spelling per vendor, Cin7's first: {v}")
 
 
+def test_nov02():
+    """2 Nov (Idelyn, 31 Oct): pay-before-shipment plans, Watson in GBP, USD for supplier payments."""
+    base = {"source": "auto", "po": "PO-130210", "po_list": ["PO-130210"], "vendor": "Imbell fitness",
+            "state": "VIC", "segment": "Retail", "currency": "USD", "flags": [], "assumed_paid": None, "kind": "full",
+            "line_id": "PO-130210|full", "amount_auto": 17483.6, "due_auto": "2026-11-13", "due_anchor": "eta",
+            "etd": "2026-11-03", "etd_estimated": False}
+    plan = {"request_date": "2026-11-03", "plan_due": "2026-10-31"}
+    rows, _ = P.merge([base], {"PO-130210|full": plan}, [], D("2026-11-02"), 4)
+    check(rows[0]["request_date"] == "2026-11-03" and not rows[0].get("replanned_from"),
+          "a payment planned before shipment stays when only the arrival slips (Imbell PO-130210)")
+    rows, _ = P.merge([dict(base, etd="2026-10-26")], {"PO-130210|full": plan}, [], D("2026-11-02"), 4)
+    check(rows[0]["request_date"] == "2026-11-10", "once shipped, the plan still follows a later arrival")
+    rows, _ = P.merge([dict(base, etd_estimated=True)], {"PO-130210|full": plan}, [], D("2026-11-02"), 4)
+    check(rows[0]["request_date"] == "2026-11-10", "an estimated ETD does not hold the plan back")
+
+    ov = {"special_arrangements": {"Watson Gym Equipment": {"deposit_pct": 25, "anchor": "etd", "offset_days": -7,
+                                                            "currency": "GBP", "rule": "25% deposit"}}}
+    po = {"is_open": True, "stage_raw": "Production-Allocated", "is_approved": True, "supplier": "Watson Gym Equipment",
+          "po_date": "2026-10-15", "value_usd": 9949.25, "usd_exact": True, "eta_cin7": "2027-02-21",
+          "ship": {}, "state": "QLD"}
+    lines, _ = P.auto_lines({"pos": {"PO-142001": po}}, [], ov, {}, {})
+    check(all(ln["currency"] == "GBP" and ln["amount_auto"] == 0.0 and any("invoices in GBP" in f for f in ln["flags"])
+              for ln in lines) and len(lines) == 2, "Watson's lines are in GBP, amount from the PI, flagged")
+    rows, _ = P.merge(lines, {"PO-142001|deposit": {"amount": 2683.5}}, [], D("2026-11-02"), 4)
+    by = {r["kind"]: r for r in rows}
+    check(by["deposit"]["amount"] == 2683.5 and by["deposit"]["currency"] == "GBP" and by["balance"]["amount"] == 0.0,
+          "a GBP deposit is not taken off a USD PO value")
+    check(L.default_currency("Full payment 100%") == "USD" and L.default_currency("Deposit 30%") == "USD"
+          and L.default_currency("Customs Brokerage") == "AUD" and L.default_currency("Other") == "AUD",
+          "supplier payments added by hand default to USD, charges keep their own currency")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
-               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_data):
+               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_nov02, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

@@ -429,7 +429,7 @@ def sync(states: dict, charges: list, label: str) -> dict:
                 vals["pay_type"] = vals["pay_type"] or "Other"
                 if vals["amount"] is None:
                     continue
-                vals["currency"] = vals["currency"] or L.CHARGE_TYPES.get(vals["pay_type"], "AUD")
+                vals["currency"] = vals["currency"] or L.default_currency(vals["pay_type"])
                 cols = ["seed_key", *L.MANUAL_FIELDS, "created_by", "created_at"]
                 con.execute(f"INSERT INTO manual_line({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
                             [key, *[vals[f] for f in L.MANUAL_FIELDS], SEED_WHO, now])
