@@ -51,8 +51,8 @@ Live: <https://sc.dynamofitness.au/Applications/payment-request/>
 - **Payment history is kept** after Cin7 receives a PO: every line with a
   recorded payment (paid, requested or not payable) is archived, so the register
   and the backup do not lose it when the PO leaves Cin7's open list.
-- **OneDrive backup** every Tuesday and Thursday 17:00 AWST, after that day's
-  pay run: *Payment Request for Four-week Rolling Forecast - Claude.ai Latest.xlsx*
+- **OneDrive backup** every Wednesday 16:30 AWST, after Accounts has recorded the
+  week's payments in the app (no later than Wednesday): *Payment Request for Four-week Rolling Forecast - Claude.ai Latest.xlsx*
   in General - Supply Chain / 1. Excel / Procurement Reports, replacing the last
   copy. Its first sheet, `updated`, has the same layout as the team's manual
   workbook, so reports built on that workbook can be pointed at it.
@@ -111,7 +111,7 @@ Outputs/
 server/                 Flask app, template, Dockerfile, compose
 refresh-payment.sh      the Mon/Wed cron job
 sync-workbook.sh        import the team's live workbook from SharePoint (on request)
-upload-onedrive.sh      the Tue/Thu 17:00 OneDrive backup
+upload-onedrive.sh      the Wednesday 16:30 OneDrive backup
 ```
 
 ## Run locally (Windows)
@@ -144,6 +144,6 @@ docker exec payment-request-app-1 python /app/Outputs/build_report.py
   `0 5 * * 1,3 /srv/team/sc/payment-request/refresh-payment.sh`
 - Monday 13:00 runs before the Shipment Schedule's 14:00 ETA re-read; the app moves
   forwarder ETAs by any change in Cin7's own ETA to bridge that hour.
-- OneDrive backup cron (UTC; 17:00 AWST Tue/Thu = 09:00 UTC):
-  `0 9 * * 2,4 /srv/team/sc/payment-request/upload-onedrive.sh` (log: `upload.log`)
+- OneDrive backup cron (UTC; 16:30 AWST Wed = 08:30 UTC):
+  `30 8 * * 3 /srv/team/sc/payment-request/upload-onedrive.sh` (log: `upload.log`)
 - Back up `Outputs/ledger.db`: it is the only data here that cannot be rebuilt from Cin7.
