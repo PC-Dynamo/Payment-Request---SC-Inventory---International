@@ -68,16 +68,17 @@ h2 .hint{text-transform:none;letter-spacing:0;font-weight:400;color:var(--muted)
   border:1px solid #cfdcf6;border-radius:8px;padding:7px 12px;margin:0 0 8px;font-size:12.5px}
 .totals b{font-variant-numeric:tabular-nums;color:var(--navy)}
 .totals .sp{flex:1}
-/* register table: fits the page, text wraps */
-/* No scroll box on a wide screen, so the header row can stick to the page itself */
-.tscroll{border:1px solid var(--line);border-radius:9px}
-@media (max-width:1560px){.tscroll{overflow-x:auto}.reg th{top:0!important}}
+/* register table: fits the page, text wraps. It scrolls in its own box, the height
+   of the window below the sticky bars, so its header row and Total row stay in
+   view at any screen width (Phoenix, 5 Nov 2026: a narrow screen lost the header). */
+.tscroll{border:1px solid var(--line);border-radius:9px;overflow:auto;
+  max-height:calc(100vh - var(--thtop,120px) - var(--tail,120px) - 6px);min-height:240px}
 table.reg{border-collapse:separate;border-spacing:0;width:100%;min-width:1480px;table-layout:fixed;font-size:11px}
 .reg th,.reg td{padding:4px 4px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;
   white-space:normal;overflow-wrap:break-word;word-break:normal}
 .reg td.nw{white-space:nowrap;overflow:hidden;text-overflow:clip;font-size:10.5px;letter-spacing:-.1px}
 .reg .clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.reg th{position:sticky;top:var(--thtop,0);background:#fafbfd;color:var(--navy);font-weight:600;z-index:1;cursor:pointer;user-select:none;
+.reg th{position:sticky;top:0;background:#fafbfd;color:var(--navy);font-weight:600;z-index:2;cursor:pointer;user-select:none;
   font-size:11px;line-height:1.25;vertical-align:bottom}
 .reg th.num,.reg td.num{text-align:right;font-variant-numeric:tabular-nums}
 .reg tr:hover td{background:#fbfcfe}
@@ -90,7 +91,7 @@ table.reg{border-collapse:separate;border-spacing:0;width:100%;min-width:1480px;
 .reg tr.review td:first-child{box-shadow:inset 3px 0 0 #7b5cd6}
 .rv{display:inline-block;background:#7b5cd6;color:#fff;border-radius:4px;padding:0 4px;font-size:10px;font-weight:700;margin-left:3px}
 .reg tr.grp td{background:var(--soft);font-weight:600;color:var(--navy)}
-.reg tfoot td{background:#fafbfd;font-weight:700;border-top:2px solid var(--line);border-bottom:0}
+.reg tfoot td{position:sticky;bottom:0;z-index:2;background:#fafbfd;font-weight:700;border-top:2px solid var(--line);border-bottom:0}
 .reg td.ed{cursor:text}
 .reg td.ed:hover{outline:1px dashed #b9c7e6;outline-offset:-2px}
 .reg td input,.reg td select{width:100%;font-size:11.5px;padding:2px 3px}
@@ -106,7 +107,7 @@ table.reg{border-collapse:separate;border-spacing:0;width:100%;min-width:1480px;
 .st-AwaitingApproval{background:#f1f3f7;color:#7b6aa8;font-style:italic}
 .st-NotPayable{background:#f1f3f7;color:#98a1b0;text-decoration:line-through}
 .icon{border:0;background:none;padding:0 4px;color:var(--muted)}
-.mini{border:1px solid var(--line);background:#fff;border-radius:4px;padding:0 4px;font-size:10.5px;line-height:16px;color:var(--muted);cursor:pointer}
+.mini{display:block;margin-top:3px;border:1px solid var(--line);background:#fff;border-radius:4px;padding:0 3px;font-size:10px;line-height:15px;color:var(--muted);cursor:pointer}
 .mini:hover{color:inherit;border-color:var(--muted)}
 .icon:hover{color:var(--accent)}
 .note{font-size:11.5px;color:var(--muted);margin:6px 2px 0}
@@ -457,7 +458,7 @@ const ALLCOLS=[   // [key, header, width weight (px at ~1700 wide), kind, editab
   ["comment","Comment",104,"text","comment"],
   ["container_number","Container Number",70,"text"],
   ["pct","%",28],
-  ["edit","",40],
+  ["edit","",48],
 ];
 let COLS=ALLCOLS;
 function cin7Link(r){
@@ -830,7 +831,8 @@ function setTab(t){if(!TABS[t])t="reg";TAB=t;
   Object.entries(TABS).forEach(([k,[b,p]])=>{$(b).setAttribute("aria-selected",k===t);$(p).hidden=k!==t});
   $(".filters").hidden=t==="spec";            // filters do not apply to the remarks
   try{localStorage.setItem("prtab",t)}catch(e){}
-  if(t==="ana")renderCharts();if(t==="spec"){loadRemarks();renderSpecRules()}}
+  if(t==="ana")renderCharts();if(t==="spec"){loadRemarks();renderSpecRules()}
+  if(t==="reg")stick()}
 document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>setTab(b.dataset.t));
 $("#bExport").onclick=()=>{
   const rows=VIEW;                      // exactly what the register lists, in its order
@@ -858,6 +860,13 @@ function stick(){  // tab bar, totals strip and table header stack while scrolli
   const tb=$(".tabbar").offsetHeight,tt=$("#totals").offsetHeight;
   document.documentElement.style.setProperty("--tbh",tb+"px");
   document.documentElement.style.setProperty("--thtop",(tb+tt)+"px");
+  // what follows the table (Group by, Mark selected as Requested): the box leaves room
+  // for it, so scrolling the page to the end never pushes the header row under the bars
+  const box=$(".tscroll");
+  if(box&&box.offsetParent){
+    const tail=document.documentElement.scrollHeight-(box.getBoundingClientRect().bottom+scrollY);
+    document.documentElement.style.setProperty("--tail",Math.max(0,Math.round(tail))+"px");
+  }
 }
 addEventListener("resize",stick);
 function render(){renderKpis();renderTable();renderCharts();stick()}
