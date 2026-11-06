@@ -581,9 +581,35 @@ def test_nov02():
           "supplier payments added by hand default to USD, charges keep their own currency")
 
 
+def test_nov06():
+    """6 Nov (Idelyn): "%" is each PO's share of the container, by PO value, as in the team's workbook."""
+    import build_report as BR
+    def ln(po, kind, value, cont, pct):
+        return {"source": "auto", "po": po, "po_list": [po], "vendor": "Shandong VOG", "state": "QLD",
+                "segment": "Retail", "currency": "USD", "flags": [], "assumed_paid": None, "kind": kind,
+                "line_id": f"{po}|{kind}", "amount_auto": round(value * pct / 100, 2), "due_auto": "2026-11-18",
+                "due_anchor": "eta", "po_value_usd": value, "pct": pct, "container": cont}
+    lines = [ln("PO-133628", "full", 7421.45, "MSMU2634295 (20GP)", 100),
+             ln("PO-133703", "deposit", 9295.0, "MSMU2634295 (20GP)", 20),
+             ln("PO-133703", "balance", 9295.0, "MSMU2634295 (20GP)", 80),
+             ln("PO-134622", "balance", 4850.0, "CSLU1676775 (20GP)", 70),
+             ln("PO-150001", "full", 1000.0, "AAAU1111111 (20GP) / BBBU2222222 (40HC)", 100)]
+    rows, _ = P.merge(lines, {}, [], D("2026-11-06"), 4)
+    by = {r["line_id"]: r for r in rows}
+    check(by["PO-133628|full"]["cont_pct"] == 44.4 and by["PO-133703|balance"]["cont_pct"] == 55.6
+          and by["PO-133703|deposit"]["cont_pct"] == 55.6,
+          "two POs in MSMU2634295: 44% / 56% by PO value, deposit and balance alike (the Excel's .44 / .56)")
+    check(by["PO-134622|balance"]["cont_pct"] == 100.0, "a PO alone in its container is 100%")
+    check(by["PO-150001|full"]["cont_pct"] is None, "a PO split over two containers gets no share")
+    check(by["PO-133703|balance"]["pct"] == 80, "the payment-terms percentage is kept for the payment type")
+    vals = BR._cell_values(by["PO-133628|full"])
+    check(vals["_pct"] == 0.444, "the exports' % column carries the container share")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
-               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_nov02, test_data):
+               test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_nov02,
+               test_nov06, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

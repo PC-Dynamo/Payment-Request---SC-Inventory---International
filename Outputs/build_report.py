@@ -240,7 +240,7 @@ COLUMNS = [       # the team's payment request register, in its column order
     ("Paid Amount (AUD)", "paid_amount_aud", 13, "money"),
     ("Comment", "comment", 34, None),
     ("Container Number", "container_number", 16, None),
-    ("%", "pct", 6, None),
+    ("%", "_pct", 6, "pct"),
     ("Payment Terms", "terms_rule", 40, None),
     ("Data notes", "_flags", 36, None),
 ]
@@ -300,7 +300,9 @@ def _cell_values(row: dict) -> dict:
     vals["_final"] = "" if row.get("status") in ("Paid", "Not Payable") else (
         "Yes" if row.get("finalised") else "No")
     vals["_status_type"] = status_type(row)
-    vals["_pct"] = (row["pct"] / 100.0) if row.get("pct") is not None else None
+    # "%" = the PO's share of its container, as in the team's workbook (not the
+    # deposit / balance percentage, which the payment type already says)
+    vals["_pct"] = (row["cont_pct"] / 100.0) if row.get("cont_pct") is not None else None
     return vals
 
 
@@ -446,6 +448,8 @@ def _sheet_app_register(ws, rows: list[dict], meta: dict, subtitle: str = "") ->
                 c.number_format = "DD/MM/YYYY"
             elif kind == "money":
                 c.number_format = "#,##0.00"
+            elif kind == "pct":
+                c.number_format = "0%"
         if row.get("not_final"):            # the team's peach = not finalised yet
             for i in range(1, len(COLUMNS) + 1):
                 ws.cell(row=r, column=i).fill = PatternFill("solid", fgColor="FCE4D6")

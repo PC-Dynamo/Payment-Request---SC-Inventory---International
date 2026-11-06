@@ -107,6 +107,29 @@ def container_parts(raw: str) -> tuple[str, str]:
     return ", ".join(dict.fromkeys(sizes)), ", ".join(dict.fromkeys(nums))
 
 
+def container_shares(rows: list[dict]) -> None:
+    """The team's "%" column (Idelyn, 6 Nov 2026): each PO's share of the container it
+    travels in, by PO value (USD) - 44% / 56% for two POs worth 7,421 and 9,295 - used
+    to split a shared container's freight and AUD charges. Sets `cont_pct` (0-100) on
+    every PO line with one container number; a PO split over several containers, a line
+    added by hand and a PO without a USD value get none. Paid lines archived after Cin7
+    received their PO still count, so the shares of a container add up to 100%."""
+    value: dict[str, dict[str, float]] = {}
+    for r in rows:
+        nums = [n for n in (r.get("container_number") or "").split(", ") if n]
+        if r.get("source") == "auto" and len(nums) == 1 and r.get("po_value_usd"):
+            value.setdefault(nums[0], {})[r["po"]] = float(r["po_value_usd"])
+    for r in rows:
+        r["cont_pct"] = None
+        nums = [n for n in (r.get("container_number") or "").split(", ") if n]
+        if r.get("source") != "auto" or len(nums) != 1:
+            continue
+        pos = value.get(nums[0]) or {}
+        total = sum(pos.values())
+        if r.get("po") in pos and total > 0:
+            r["cont_pct"] = round(pos[r["po"]] / total * 100, 1)
+
+
 # Who is paid. Rizqi (UAT): keep factory invoices apart from forwarder /
 # customs broker invoices (Mainfreight, Ice Cargo).
 FORWARDER_TYPES = {"Freight Payment", "Customs Brokerage", "GST Payment", "Government Duty",
@@ -698,6 +721,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
 
     for r in out:
         r["container_size"], r["container_number"] = container_parts(r.get("container") or "")
+    container_shares(out)
     out.sort(key=lambda r: (r.get("request_date") or "9999", r.get("due_date") or "9999",
                             r.get("vendor") or "", r.get("po") or ""))
     return out, {"today": _s(today), "next_request": _s(nxt), "next_request_aud": _s(nxt_aud),

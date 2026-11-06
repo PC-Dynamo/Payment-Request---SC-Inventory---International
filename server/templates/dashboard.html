@@ -457,7 +457,7 @@ const ALLCOLS=[   // [key, header, width weight (px at ~1700 wide), kind, editab
   ["paid_amount_aud","Paid Amount (AUD)",68,"money","paid_amount_aud"],
   ["comment","Comment",104,"text","comment"],
   ["container_number","Container Number",70,"text"],
-  ["pct","%",28],
+  ["cont_pct","%",28,"","","Share of the container, by PO value (USD): this PO ÷ all POs in the same container. A split by volume (CBM) can differ by a few points."],
   ["edit","",48],
 ];
 let COLS=ALLCOLS;
@@ -486,7 +486,7 @@ function cell(r,c){
     case "paid_amount": return money(r.paid_amount);
     case "paid_currency": return r.paid_currency?`<span class="${r.paid_currency_default?"muted":""}" title="${r.paid_currency_default?"the line's currency - pick another if it was paid in a different one":""}">${esc(r.paid_currency)}</span>`:"";
     case "paid_amount_aud": return r.paid_amount_aud!=null?`<span class="${r.paid_aud_default?"muted":""}" title="${r.paid_aud_default?"paid in AUD":""}">${money(r.paid_amount_aud)}</span>`:"";
-    case "pct": return r.pct!=null?fmt(r.pct,0)+"%":"";
+    case "cont_pct": return r.cont_pct!=null?fmt(r.cont_pct,0)+"%":"";
     case "finalised": return ["Paid","Not Payable"].includes(r.status)?"":
       `<input type="checkbox" class="fin" data-id="${esc(r.line_id)}" ${r.finalised?"checked":""} title="PI / amount confirmed (untick = peach, not finalised)">`;
     case "edit": {
@@ -501,7 +501,7 @@ function cell(r,c){
 }
 function sortVal(r,key){
   if(CURS.includes(key))return r.currency===key?+r.amount:-Infinity;
-  if(key==="paid_amount"||key==="paid_amount_aud"||key==="pct")return r[key]==null?-Infinity:+r[key];
+  if(key==="paid_amount"||key==="paid_amount_aud"||key==="cont_pct")return r[key]==null?-Infinity:+r[key];
   if(key==="status")return statusLabel(r);
   return r[key]??"";
 }
@@ -514,7 +514,7 @@ function renderTable(){
   COLS=ALLCOLS.filter(c=>!["GBP","EUR"].includes(c[0])||rows.some(r=>r.currency===c[0]));
   const tw=COLS.reduce((a,c)=>a+c[2],0);
   $("#cols").innerHTML=COLS.map(c=>`<col style="width:${(c[2]/tw*100).toFixed(3)}%">`).join("");
-  $("#tbl thead").innerHTML="<tr>"+COLS.map(c=>`<th data-k="${c[0]}" class="${c[3]==="money"?"num":""}">${esc(c[1])}${sortKey===c[0]?(sortDir>0?" ▲":" ▼"):""}</th>`).join("")+"</tr>";
+  $("#tbl thead").innerHTML="<tr>"+COLS.map(c=>`<th data-k="${c[0]}" class="${c[3]==="money"?"num":""}"${c[5]?` title="${esc(c[5])}"`:""}>${esc(c[1])}${sortKey===c[0]?(sortDir>0?" ▲":" ▼"):""}</th>`).join("")+"</tr>";
   const group=!!F.group&&!sortKey;
   const pname=x=>x.payee==="Supplier"?"Supplier (factory)":x.payee==="Forwarder"?"Forwarder / broker":"Other";
   const gdate=x=>x.status==="Paid"?"Paid":x.status==="Not Payable"?"Not payable":x.status==="Awaiting Approval"?"Awaiting PO approval in Cin7 (New, not approved) — not requested unless a request date is set":x.request_date?`Pay run ${dd(x.request_date)}${x.request_date===x.next_run?" (next)":""}`:"Date TBC — no ETA yet";
@@ -644,7 +644,7 @@ function openLine(id){
     <dt>Payment terms</dt><dd>${esc(r.terms_text||"—")}<br><span class="muted">${esc(r.terms_rule)} · ${esc(r.terms_source)}</span></dd>
     <dt>Due (auto)</dt><dd>${esc(dd(r.due_auto))||"TBC — no ETA"} <span class="muted">from ${esc(r.due_anchor)}</span></dd>
     <dt>Stage</dt><dd>${esc(r.stage)}${r.delay_days?` · ${r.delay_days} days late vs first ETA`:""}</dd>
-    <dt>Container</dt><dd>${esc(r.container)||"—"} ${r.forwarder?"· "+esc(r.forwarder):""}</dd>
+    <dt>Container</dt><dd>${esc(r.container)||"—"} ${r.forwarder?"· "+esc(r.forwarder):""}${r.cont_pct!=null?`<br><span class="muted">this PO is ${fmt(r.cont_pct,1)}% of the container's PO value${(()=>{const o=[...new Set(DATA.filter(x=>x.source==="auto"&&x.container_number===r.container_number&&x.po!==r.po).map(x=>x.po))];return o.length?" (with "+o.map(esc).join(", ")+")":""})()}</span>`:""}</dd>
     <dt>Branch</dt><dd>${esc(r.branch)} (${esc(r.state)}) · ${esc(r.segment)}${r.segment_mixed?" (mixed PO)":""}</dd>
     ${r.assumed_paid?`<dt>Assumed</dt><dd>${esc(r.assumed_paid)}</dd>`:""}
     ${r.flags.length?`<dt>Checks</dt><dd class="flag">${r.flags.map(esc).join("<br>")}</dd>`:""}
