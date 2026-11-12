@@ -304,6 +304,10 @@ def test_uat_16oct():
     check(rows[0]["request_date"] == "2026-10-20", "a plan earlier than the due date on purpose stays")
     rows, _ = P.merge([base], {"PO-80001|full": dict(plan, status="Requested")}, [], D("2026-10-17"), 4)
     check(rows[0]["request_date"] == "2026-10-20", "a line already sent to Accounts keeps its date")
+    rows, _ = P.merge([base], {"PO-80001|full": dict(plan, paid_date="2026-10-20")}, [], D("2026-10-21"), 4)
+    check(rows[0]["request_date"] == "2026-10-20" and rows[0]["status"] == "Paid"
+          and not rows[0].get("replanned_from"),
+          "a line Accounts paid by typing only the paid date keeps its run (PO-137130, 12 Nov)")
     cm = dict(base, line_id="PO-134847|balance", kind="balance", due_auto="2026-11-01")
     rows, _ = P.merge([cm], {"PO-134847|balance": {"request_date": "2026-11-03", "plan_due": "2026-10-20"}},
                       [], D("2026-10-28"), 4)

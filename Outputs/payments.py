@@ -500,10 +500,13 @@ def replanned(row: dict, st: dict, due: dt.date | None, today: dt.date,
     """The record with its planned request date moved later by as much as the due
     date has slipped since the plan was made (`plan_due`), if that is more than
     a week. A line already sent to Accounts, paid or written off keeps its date,
-    and so does a payment anchored on the PO date (deposit, paid in advance)."""
+    and so does a payment anchored on the PO date (deposit, paid in advance).
+    A paid date counts as paid even when the stored status is empty: Accounts
+    often types only the paid date (12 Nov: PO-137130 paid 3 Nov showed under
+    17 Nov; PO-139260/135506/137127 paid 10 Nov showed under 24 Nov)."""
     req, base = _d(st.get("request_date")), _d(st.get("plan_due"))
     if not (req and base and due) or row.get("due_anchor") == "order" \
-            or st.get("status") in ("Requested", "Paid", "Not Payable"):
+            or st.get("status") in ("Requested", "Paid", "Not Payable") or st.get("paid_date"):
         return st
     shift = (due - base).days
     etd = _d(row.get("etd"))
