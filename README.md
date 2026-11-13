@@ -61,7 +61,7 @@ Live: <https://sc.dynamofitness.au/Applications/payment-request/>
 
 | Data | Source | Refresh |
 |---|---|---|
-| Open POs, AUD value, stage, branch | Cin7 v1 API, **read-only**, `modifiedDate` delta only | Fri 08:00 + Mon 12:00 AWST (after the team's Cin7 ETA updates; SC updates the app by Mon 13:00) |
+| Open POs, AUD value, stage, branch | Cin7 v1 API, **read-only**, `modifiedDate` delta only | Fri 08:05 + Mon 12:05 AWST (after the team's Cin7 ETA updates; SC updates the app by Mon 13:00) |
 | USD value | qty × Cin7 `costUSD`, pinned per PO line when first seen | with the POs; product costs weekly |
 | ETA to port, ETD, container, forwarder | Shipment Schedule cache `/srv/team/sc/shipment-schedule` | it rebuilds Mon + Thu 14:00 AWST |
 | Payment terms | SC Master Data cache `/srv/team/sc/master-data` | **weekly** (Monday run) |
@@ -109,7 +109,7 @@ Outputs/
   selftest.py           rules + data checks
   overrides.json        special arrangements, aliases, transit weeks
 server/                 Flask app, template, Dockerfile, compose
-refresh-payment.sh      the Fri 08:00 / Mon 12:00 cron job
+refresh-payment.sh      the Fri 08:05 / Mon 12:05 cron job
 sync-workbook.sh        import the team's live workbook from SharePoint (on request)
 upload-onedrive.sh      the Wed / Fri 16:30 OneDrive backup
 ```
@@ -140,9 +140,10 @@ docker exec payment-request-app-1 python /app/Outputs/build_report.py
   with `/_authz`, so access is granted per person on the admin page (slug
   `payment-request`).
 - Cin7 credentials come from the Shipment Schedule app's `server/.env`.
-- Cron (UTC; 08:00 AWST Fri = 00:00 UTC Fri, 12:00 AWST Mon = 04:00 UTC Mon):
-  `0 0 * * 5` and `0 4 * * 1 /srv/team/sc/payment-request/refresh-payment.sh`
-- Monday 12:00 runs before the Shipment Schedule's 14:00 ETA re-read; the app moves
+- Cron (UTC; 08:05 AWST Fri = 00:05 UTC Fri, 12:05 AWST Mon = 04:05 UTC Mon; five past
+  so it misses po-gateway's Cin7 sync every 15 min, which got the 13 Nov 08:00 run refused):
+  `5 0 * * 5` and `5 4 * * 1 /srv/team/sc/payment-request/refresh-payment.sh`
+- Monday 12:05 runs before the Shipment Schedule's 14:00 ETA re-read; the app moves
   forwarder ETAs by any change in Cin7's own ETA to bridge that hour.
 - OneDrive backup cron (UTC; 16:30 AWST Wed + Fri = 08:30 UTC):
   `30 8 * * 3,5 /srv/team/sc/payment-request/upload-onedrive.sh` (log: `upload.log`)

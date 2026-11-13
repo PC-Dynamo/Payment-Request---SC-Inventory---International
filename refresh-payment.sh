@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Scheduled refresh for the Payment Request - SC Inventory - International app.
 #
-# Friday 08:00 and Monday 12:00 AWST - after the team updates ETAs in Cin7; SC
+# Friday 08:05 and Monday 12:05 AWST - after the team updates ETAs in Cin7; SC
 # then updates the app by Monday 13:00 for the Tuesday pay run (Phoenix, 2 Nov
 # 2026; was Mon + Wed 13:00).
 # (The Shipment Schedule re-reads forwarder ETAs Mon + Thu 14:00; until then
 #  the app shifts forwarder ETAs by any change in Cin7's own ETA.)
-# Prod runs UTC and AWST = UTC+8, so 08:00 AWST Fri = 00:00 UTC Fri and
-# 12:00 AWST Mon = 04:00 UTC Mon:
-#   0 0 * * 5  /srv/team/sc/payment-request/refresh-payment.sh
-#   0 4 * * 1  /srv/team/sc/payment-request/refresh-payment.sh
+# Prod runs UTC and AWST = UTC+8, so 08:05 AWST Fri = 00:05 UTC Fri and
+# 12:05 AWST Mon = 04:05 UTC Mon. Five past, not on the hour: po-gateway calls
+# Cin7 every 15 min, and on 13 Nov 2026 the 08:00 run was refused (HTTP 429):
+#   5 0 * * 5  /srv/team/sc/payment-request/refresh-payment.sh
+#   5 4 * * 1  /srv/team/sc/payment-request/refresh-payment.sh
 #
 # Payment terms are re-read from master-data on the Monday run (weekly).
 # Verifies the payload actually moved rather than trusting the exit code.
