@@ -15,6 +15,16 @@
    "rule": "100% T/T in advance - in the first pay run after the PO is raised; the team approves the PO in Cin7 when the PI is paid, so set a request date on a draft PO to request it (payment workbook, Aug-Oct 2026; master-data still says 50% deposit, 50% against B/L copy)"
   }
  },
+ "check_points": [
+  {
+   "sku": "CBT-PRO90-V2",
+   "supplier": "Iron Master",
+   "label": "PRO90-V2 tooling credit",
+   "credit_usd_per_unit": 5.26,
+   "rule": "Iron Master returns the USD 15,800 PRO90-V2 tooling cost as a credit of USD 5.26 per unit on the first 3,000 units (5.26 x 3,000 = USD 15,780). Each shipment PI that includes CBT-PRO90-V2 should deduct it from the PI total - check the PI before requesting the payment (agreed Aug 2026; Asana: Payment Request for Four-week Rolling Forecast as of 14.08.2026)."
+  }
+ ],
+ "check_points_note": "A PO whose Cin7 lines carry the SKU is flagged CHECK (purple) on every payment line, with the credit expected for its units. The app does not count units across POs: received POs leave the Cin7 data, so the team keeps the running total towards 3,000. Remove an entry once its credit is used up.",
  "term_aliases": {
   "Rizhao Land Sea Fitness Goods Ltd": "Rizhao Land Sea Fitness Goods Ltd (CKB)",
   "Xiamen K-Life Sport Co": "KLife",

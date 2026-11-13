@@ -92,7 +92,8 @@ def api_data():
     rows, when = BR.merged(p)
     meta = {**p["meta"], **when}
     return Response(json.dumps({"meta": meta, "rows": rows, "terms_table": p["terms_table"],
-                                "special_arrangements": p["special_arrangements"]}),
+                                "special_arrangements": p["special_arrangements"],
+                                "check_points": p.get("check_points") or []}),
                     mimetype="application/json", headers={"Cache-Control": "no-store"})
 
 

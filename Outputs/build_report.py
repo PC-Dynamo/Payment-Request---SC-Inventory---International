@@ -239,6 +239,7 @@ def build_payload() -> dict:
             {k: r.get(k) for k in ("supplier_name", "terms", "deposit_pct", "due_days", "basis")}
             for r in (terms.get("payment_terms") or []) if (r.get("supplier_type") or "") != "Local"],
         "special_arrangements": ov.get("special_arrangements") or {},
+        "check_points": ov.get("check_points") or [],
     }
 
 

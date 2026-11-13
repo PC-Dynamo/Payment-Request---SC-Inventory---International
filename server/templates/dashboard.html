@@ -211,7 +211,7 @@ dl.facts dt{color:var(--muted)} dl.facts dd{margin:0}
     <section>
       <div class="totals" id="totals"></div>
       <div class="tscroll"><table class="reg" id="tbl"><colgroup id="cols"></colgroup><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
-      <div class="note"><span class="rv">BULK</span> / <span class="rv">CHECK</span> purple rows need a review: K-Life bulk-order deposit (record it on the shipment PO it is reallocated to once the bulk order closes).<br>Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount, paid currency, paid amount in AUD). ✎ opens every field; on a deposit, <b>Balance</b> opens the PO's balance line; on a line added by hand, <b>Copy</b> starts a new line from it.
+      <div class="note"><span class="rv">BULK</span> / <span class="rv">CHECK</span> purple rows need a review: K-Life bulk-order deposit (record it on the shipment PO it is reallocated to once the bulk order closes), or a credit the PI should show (PRO90-V2 tooling: USD 5.26 a unit - see Special Arrangements).<br>Click a shaded cell to edit it in place (Accounts: scheduled date, paid date, paid amount, paid currency, paid amount in AUD). ✎ opens every field; on a deposit, <b>Balance</b> opens the PO's balance line; on a line added by hand, <b>Copy</b> starts a new line from it.
         <label style="margin-left:14px">Group by <select id="fGroup"><option value="date">Request date</option><option value="payee">Payee</option><option value="date_payee">Request date + payee</option><option value="">None</option></select></label>
         <button id="bSubmit" disabled style="margin-left:10px">Mark selected as Requested</button></div>
     </section>
@@ -275,7 +275,7 @@ const k=n=>{n=Number(n)||0;const a=Math.abs(n);return a>=1e6?(n/1e6).toFixed(2)+
 const dd=s=>{if(!s)return"";const[y,m,d]=String(s).slice(0,10).split("-");return `${d}/${m}/${y.slice(2)}`};
 const SER=["--s1","--s2","--s3","--s4","--s5"].map(v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim());
 const CURS=["USD","AUD","GBP","EUR"];
-let DATA=[],META=null,charts={},sortKey=null,sortDir=1,selected=new Set(),TAB="reg",SPECIAL={};
+let DATA=[],META=null,charts={},sortKey=null,sortDir=1,selected=new Set(),TAB="reg",SPECIAL={},CHECKPTS=[];
 const F0={payee:"",fin:"",group:"date",win:"open",state:"",seg:"",cur:"",sup:"",stage:"",status:"",type:"",q:"",reqF:"",reqT:"",etdF:"",etdT:"",etaF:"",etaT:"",accF:"",accT:""};
 const F={...F0};
 try{Object.assign(F,JSON.parse(localStorage.getItem("prf3")||"{}"));F.q=""}catch(e){}
@@ -815,7 +815,8 @@ function renderSpecRules(){
   const rows=Object.entries(by).sort((a,b)=>a[0].localeCompare(b[0])).map(([s,v])=>{
     const [rule,src]=Object.entries(v.rules).sort((a,b)=>b[1]-a[1])[0][0].split("|");
     return `<tr><td>${esc(s)}</td><td>${esc(rule)}${v.bulk?' <span class="rv">BULK</span>':""}</td><td class="muted">${esc(src)}</td><td class="muted">${v.n}</td></tr>`}).join("");
-  const sp=Object.entries(SPECIAL||{}).map(([s,v])=>`<li><b>${esc(s)}</b>: ${esc(v.rule||"")}</li>`).join("");
+  const sp=Object.entries(SPECIAL||{}).map(([s,v])=>`<li><b>${esc(s)}</b>: ${esc(v.rule||"")}</li>`).join("")
+    +(CHECKPTS||[]).map(c=>`<li><b>Check point - ${esc(c.label||c.sku)}</b> <span class="rv">CHECK</span>: ${esc(c.rule||"")} POs with ${esc(c.sku)} are marked CHECK (purple) until requested.</li>`).join("");
   $("#specRules").innerHTML=`<ul class="notes">
       <li><b>Pay runs</b>: Tuesday for supplier payments and USD freight; Thursday for AUD charges. A line still unpaid after its run moves to the next one (↻).</li>
       <li><b>K-Life bulk orders</b>: the deposit is requested on the bulk (China stock) order (purple, BULK); each shipment PO is one payment; the PO the bulk deposit is moved to (✎ → Bulk deposit reallocated from) pays the rest, and K-Life lines are flagged CHECK until a paid bulk deposit is moved.</li>
@@ -874,7 +875,7 @@ async function load(first=true){
   try{
     const r=await fetch("api/data",{cache:"no-store"});const j=await r.json();
     if(!r.ok)throw new Error(j.error||r.status);
-    DATA=j.rows;META=j.meta;SPECIAL=j.special_arrangements||{};
+    DATA=j.rows;META=j.meta;SPECIAL=j.special_arrangements||{};CHECKPTS=j.check_points||[];
     $("#sub").innerHTML=`Next pay run <b>Tue ${esc(dd(META.next_request))}</b> (USD: suppliers &amp; freight) · <b>Thu ${esc(dd(META.next_request_aud))}</b> (AUD charges) · refreshed ${esc(META.report_built_awst)} · ETA from Shipment Schedule ${esc(META.shipment&&META.shipment.generated_awst||"—")} · auto-refresh from Cin7 Fri 08:05 &amp; Mon 12:05 AWST (SC updates by Mon 13:00 for the Tuesday run)`;
     if(first){buildFilters();let t="reg";try{t=localStorage.getItem("prtab")||"reg"}catch(e){}setTab(t)}else fillSelects();
     render();renderNotes();

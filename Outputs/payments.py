@@ -205,6 +205,26 @@ def deposit_pct_of(pay_type) -> float | None:
     return pct if 0 < pct < 100 else 0.0
 
 
+def check_point_note(po: dict, points: list | None) -> str:
+    """CHECK note for a PO whose Cin7 lines carry a SKU with an agreed credit on
+    its PI (overrides 'check_points'): Iron Master's PRO90-V2 tooling cost comes
+    back at USD 5.26 a unit on the first 3,000 units (Phoenix, 13 Nov 2026).
+    Units are not counted across POs: received POs leave the Cin7 cache."""
+    out = []
+    for cp in points or []:
+        sku = str(cp.get("sku") or "").strip().lower()
+        if not sku or (cp.get("supplier") and M._key(cp["supplier"]) != M._key(po.get("supplier") or "")):
+            continue
+        units = sum(float(ln[2] or 0) for ln in po.get("lines") or []
+                    if str(ln[0] or "").strip().lower() == sku)
+        if units <= 0:
+            continue
+        per = float(cp.get("credit_usd_per_unit") or 0)
+        out.append(f"{cp.get('label') or cp['sku']}: this PO has {units:g} x {cp['sku']}, so its PI should "
+                   f"deduct USD {per:,.2f} x {units:g} = USD {per * units:,.2f}. {cp.get('rule') or ''}".strip())
+    return " | ".join(out)
+
+
 def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
                calibration: dict | None = None, states: dict | None = None) -> tuple[list[dict], dict]:
     book = T.TermsBook(terms_rows, overrides.get("term_aliases"))
@@ -306,6 +326,11 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             review = ("Bulk order deposit - when the bulk order is closed, record its deposit on the "
                       "shipment PO it is reallocated to")
             flags.append(review)
+        # A credit agreed on the PI (PRO90-V2 tooling): CHECK on every payment
+        # line of the PO, since whichever payment is next must come off the PI.
+        check = "" if bulk else check_point_note(po, overrides.get("check_points"))
+        if check:
+            flags.append(check)
 
         base = {
             "source": "auto",
@@ -411,6 +436,7 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
                 "assumed_paid": assumed,
                 "awaiting_approval": awaiting,
                 "review": review if (kind == "deposit" or bulk) else "",
+                "check_point": check,
             })
     stats["no_terms"] = sorted(stats["no_terms"])
     return lines, stats
@@ -584,6 +610,9 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
             # Planned for a pay run that has passed and still not paid: it goes
             # in the next run (UAT: three POs still showed 6 Oct on 9 Oct).
             carried, req = req, nxt_l
+        if row.get("check_point") and status not in ("Requested", "Paid", "Not Payable"):
+            # Purple CHECK until the line goes to Accounts; the note stays in Checks.
+            row["review"] = " | ".join(x for x in (row.get("review"), row["check_point"]) if x)
         stored_final = st.get("finalised")
         if stored_final is None:
             # Default: confirmed once someone has entered the PI amount or invoice.

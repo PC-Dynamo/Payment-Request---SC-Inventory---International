@@ -652,10 +652,49 @@ def test_nov13():
           .startswith("PO not in the payment plan"), "an open PO outside the plan is not called closed")
 
 
+def test_nov13_check_point():
+    """13 Nov (Phoenix): Iron Master's PRO90-V2 tooling credit, USD 5.26 a unit on the
+    first 3,000 units, is a CHECK on every payment line of a PO that carries the SKU."""
+    ov = json.loads((HERE / "overrides.json").read_text(encoding="utf-8"))
+    check(any(c["sku"] == "CBT-PRO90-V2" and c["credit_usd_per_unit"] == 5.26 for c in ov.get("check_points") or []),
+          "the PRO90-V2 check point is in overrides.json")
+    cp = [{"sku": "CBT-PRO90-V2", "supplier": "Iron Master", "label": "PRO90-V2 tooling credit",
+           "credit_usd_per_unit": 5.26, "rule": "first 3,000 units"}]
+    terms = [{"supplier_name": "Iron Master", "terms": "30% deposit, 70% balance before shipment",
+              "deposit_pct": "30", "basis": "ETD"}]
+    def po(sup, lines, stage="Production-Allocated"):
+        return {"is_open": True, "stage_raw": stage, "is_approved": True, "supplier": sup, "po_date": "2026-11-01",
+                "value_usd": 20000.0, "usd_exact": True, "eta_cin7": "2027-01-20", "ship": {}, "state": "WA",
+                "lines": lines}
+    cache = {"pos": {
+        "PO-90001": po("Iron Master", [["CBT-PRO90-V2", "Trainer V2", 50.0, 0, 0],
+                                       ["CBT-PRO90-Jammers-V2", "Jammer Arms V2", 25.0, 0, 0]]),
+        "PO-90002": po("Iron Master", [["CBT-PRO90-v1.1", "Trainer", 10.0, 0, 0]]),
+        "PO-90003": po("Iron Master", [["CBT-PRO90-V2", "Trainer V2", 50.0, 0, 0]], stage="Production-China Stock"),
+        "PO-90004": po("BODYLONGER FITNESS EQUIPMENT CO.,LTD", [["CBT-PRO90-V2", "Trainer V2", 5.0, 0, 0]])}}
+    lines, _ = P.auto_lines(cache, terms, {"check_points": cp}, {}, {})
+    by = {}
+    for ln in lines:
+        by.setdefault(ln["po"], []).append(ln)
+    check(len(by.get("PO-90001", [])) == 2 and all("USD 5.26 x 50 = USD 263.00" in ln["check_point"]
+                                                   and any("USD 263.00" in f for f in ln["flags"])
+                                                   for ln in by["PO-90001"]),
+          "every payment line of a PO with 50 x CBT-PRO90-V2 carries the USD 263.00 credit check (accessories not counted)")
+    check(not any(ln.get("check_point") for p in ("PO-90002", "PO-90004") for ln in by.get(p, [])),
+          "the v1.1 trainer and another supplier's PO are not flagged")
+    check("PO-90003" not in by, "Iron Master's bulk (China stock) order stays out of the list")
+    rows, _ = P.merge(by["PO-90001"], {}, [], D("2026-11-13"), 4)
+    check(all(r["review"].startswith("PRO90-V2 tooling credit") for r in rows), "unpaid lines show CHECK (purple)")
+    rows, _ = P.merge(by["PO-90001"], {"PO-90001|deposit": {"status": "Requested", "request_date": "2026-11-17"},
+                                       "PO-90001|balance": {"paid_date": "2026-11-10"}}, [], D("2026-11-13"), 4)
+    check(all(not r.get("review") and any("USD 263.00" in f for f in r["flags"]) for r in rows),
+          "once requested or paid the CHECK clears, the note stays under Checks")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
                test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_nov02,
-               test_nov06, test_nov13, test_data):
+               test_nov06, test_nov13, test_nov13_check_point, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")
