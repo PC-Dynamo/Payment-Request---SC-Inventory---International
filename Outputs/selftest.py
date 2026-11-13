@@ -610,10 +610,52 @@ def test_nov06():
     check(vals["_pct"] == 0.444, "the exports' % column carries the container share")
 
 
+def test_nov13():
+    """13 Nov: paid records of POs the register does not list (voided PO-137608, POs received
+    before the archive began) show from the ledger; one seeded "100% paid" row shows once."""
+    import build_report as BR
+    seed = {"status": "Paid", "paid_date": "2026-09-15", "paid_amount": 8454.0, "seed_key": "reference row 737",
+            "vendor_entity": "Shandong Vog Sports Products Co. Ltd", "comment": "Full payment, accessories VOG"}
+    states = {"PO-137608|deposit": dict(seed), "PO-137608|balance": dict(seed),
+              "PO-127943|deposit": {"status": "Paid", "paid_date": "2026-06-30", "amount": 5370.0,
+                                    "paid_amount": 5370.0, "seed_key": "reference row 794"},
+              "PO-127943|balance": {"status": "Paid", "paid_date": "2026-08-11", "amount": 13530.0,
+                                    "paid_amount": 13530.0, "seed_key": "reference row 795"},
+              "PO-133700|balance": {"status": "Paid", "paid_date": "2026-11-10", "paid_amount": 11232.0},
+              "PO-140000|deposit": {"request_date": "2026-11-17", "amount": 50.0},
+              "PO-150000|full": {"status": "Paid", "paid_date": "2026-10-01"}}
+    auto = [{"po": "PO-133700", "line_id": "PO-133700|balance"}]
+    snaps = [{"po": "PO-150000", "line_id": "PO-150000|full"}]
+    cache = {"pos": {"PO-127943": {"supplier": "Zhejiang Elina", "branch": "Yagoona Branch + NSW DC", "state": "NSW",
+                                   "stage": "Received", "is_open": False, "value_usd": 18900.0}}}
+    un = {u["line_id"]: u for u in BR.unlisted_records(states, auto, snaps, cache)}
+    check(set(un) == {"PO-137608|balance", "PO-127943|deposit", "PO-127943|balance"},
+          "only paid records with no live line and nothing archived are added")
+    vog = un["PO-137608|balance"]
+    check(vog["kind"] == "full" and vog["pay_type"] == "Full payment" and vog["amount_auto"] == 8454.0
+          and vog["vendor"] == "Shandong Vog Sports Products Co. Ltd" and vog["flags"],
+          "a seeded 100%-paid row under deposit + balance shows once, from the record, when Cin7 data is gone")
+    check(un["PO-127943|deposit"]["branch"] == "Yagoona Branch + NSW DC" and un["PO-127943|balance"]["amount_auto"] == 13530.0
+          and not un["PO-127943|balance"]["flags"], "a received PO keeps its two payments and its Cin7 details")
+    closed = BR.closed_archive(list(un.values()), auto, cache)
+    rows, _ = P.merge(closed, states, [], D("2026-11-13"), 4)
+    by = {r["line_id"]: r for r in rows}
+    check(by["PO-137608|balance"]["status"] == "Paid" and by["PO-137608|balance"]["paid_amount"] == 8454.0
+          and by["PO-137608|balance"]["comment"] == "Full payment, accessories VOG"
+          and sum(r["paid_amount"] or 0 for r in rows if r["po"] == "PO-137608") == 8454.0,
+          "PO-137608 shows paid USD 8,454 once, with Accounts' comment")
+    check(by["PO-127943|deposit"]["stage"] == "Received"
+          and "PO closed in Cin7 - kept from the payment record" in by["PO-127943|deposit"]["flags"],
+          "a received PO's lines are marked as kept from the payment record")
+    check(BR.closed_archive([dict(un["PO-127943|deposit"])], [], {"pos": {"PO-127943": {"is_open": True,
+                                                                                        "stage": "Bulk"}}})[0]["flags"][-1]
+          .startswith("PO not in the payment plan"), "an open PO outside the plan is not called closed")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
                test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_nov02,
-               test_nov06, test_data):
+               test_nov06, test_nov13, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

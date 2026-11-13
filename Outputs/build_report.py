@@ -99,9 +99,64 @@ def closed_archive(snaps: list[dict], auto: list[dict], cache: dict) -> list[dic
         snap = dict(snap)
         snap.update({"archived": True, "assumed_paid": None, "awaiting_approval": False,
                      "stage": c.get("stage") or "Closed in Cin7"})
-        snap["flags"] = [x for x in snap.get("flags") or [] if "closed in Cin7" not in x] + [
-            "PO closed in Cin7 - kept from the payment record"]
+        snap["flags"] = [x for x in snap.get("flags") or [] if "kept from the payment record" not in x] + [
+            "PO not in the payment plan (China-stock order) - kept from the payment record"
+            if c.get("is_open") else "PO closed in Cin7 - kept from the payment record"]
         out.append(snap)
+    return out
+
+
+UNLISTED_LABEL = {"deposit": "Deposit", "balance": "Balance", "full": "Full payment"}
+
+
+def unlisted_records(states: dict, auto: list[dict], snaps: list[dict], cache: dict) -> list[dict]:
+    """Lines for payment records the register would otherwise not show: no live
+    line and nothing archived for the PO. The archive only began on 15 Oct, so
+    POs received before then lost their paid lines, and a PO never in the plan
+    lost them too - VOG's accessories PO-137608 (USD 8,454 paid 15 Sep) sat at
+    China-stock stage, was voided on 19 Oct and vanished (Accounts asked about
+    its funds, 13 Nov 2026). Built from the cached PO where Cin7 still lists it,
+    else from the payment record alone."""
+    listed = {ln["po"] for ln in auto} | {s.get("po") for s in snaps}
+    by_po: dict[str, list] = {}
+    for lid, st in states.items():
+        po, _, kind = lid.partition("|")
+        if kind in UNLISTED_LABEL and po not in listed and is_payment_record(st):
+            by_po.setdefault(po, []).append((kind, lid, st))
+    out = []
+    for po, recs in sorted(by_po.items()):
+        recs.sort(key=lambda r: list(UNLISTED_LABEL).index(r[0]))
+        # The 25 Sep seed filed a "100% paid" workbook row under both deposit
+        # and balance, each with the whole paid amount: it is one payment.
+        if len(recs) > 1 and recs[0][2].get("seed_key") and all(
+                st.get("seed_key") == recs[0][2]["seed_key"] and st.get("amount") is None
+                and st.get("paid_amount") == recs[0][2].get("paid_amount") for _, _, st in recs):
+            recs = [("full", recs[-1][1], recs[-1][2])]
+        c = (cache.get("pos") or {}).get(po) or {}
+        ship = c.get("ship") or {}
+        for kind, lid, st in recs:
+            amt = st.get("amount") if st.get("amount") is not None else st.get("paid_amount")
+            out.append({
+                "source": "auto", "po": po, "po_list": [po], "cin7_id": c.get("cin7_id"),
+                "vendor": c.get("supplier") or st.get("vendor_entity") or "",
+                "branch": c.get("branch") or "", "state": c.get("state") or "",
+                "segment": c.get("segment") or "Retail", "segment_mixed": c.get("segment_mixed"),
+                "stage": c.get("stage"), "stage_raw": c.get("stage_raw"), "bulk": False,
+                "entry_date": c.get("po_date"), "supplier_invoice": c.get("supplier_invoice"),
+                "etd": ship.get("etd"), "etd_estimated": False,
+                "eta_port": ship.get("eta_shipper"), "eta_cin7": c.get("eta_cin7") or ship.get("eta"),
+                "container": ship.get("container_raw") or c.get("container_cin7") or "",
+                "forwarder": ship.get("forwarder") or "",
+                "po_value_usd": c.get("value_usd"), "po_value_aud": c.get("value_aud"),
+                "usd_exact": c.get("usd_exact"), "terms_rule": "", "terms_source": "",
+                "flags": [] if c else ["PO no longer in the app's Cin7 data (voided or closed) - "
+                                       "shown from the payment record"],
+                "line_id": lid, "kind": kind, "pay_type": UNLISTED_LABEL[kind], "pct": None,
+                "currency": st.get("currency") or st.get("paid_currency") or "USD",
+                "amount_auto": float(amt or 0),
+                "due_auto": st.get("due_date") or st.get("plan_due"), "due_anchor": None,
+                "assumed_paid": None, "awaiting_approval": False, "review": "",
+            })
     return out
 
 
@@ -121,7 +176,13 @@ def build_payload() -> dict:
         lid = ledger_id(ln, states)
         dues[lid] = (states.get(lid) or {}).get("due_date") or ln.get("due_auto")
     L.backfill_plan_due(dues)
-    archived = closed_archive(L.archived_snapshots(), auto, cache)
+    # Records Cin7 still has the PO for are archived, so they keep its branch and
+    # dates after the cache drops it; the rest are rebuilt from the ledger each time.
+    unlisted = unlisted_records(states, auto, L.archived_snapshots(), cache)
+    L.archive_lines([u for u in unlisted if u["po"] in (cache.get("pos") or {})])
+    archived = closed_archive(L.archived_snapshots() + [u for u in unlisted
+                                                         if u["po"] not in (cache.get("pos") or {})],
+                              auto, cache)
     stats["archived"] = len(archived)
     meta = cache.get("meta", {})
     branch_state, branch_name = _branch_maps()
