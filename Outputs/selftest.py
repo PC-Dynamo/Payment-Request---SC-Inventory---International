@@ -691,10 +691,41 @@ def test_nov13_check_point():
           "once requested or paid the CHECK clears, the note stays under Checks")
 
 
+def test_nov16():
+    """16 Nov (Idelyn): a line paid with no request date saved stays in the pay run of its
+    paid date (PO-144008 deposit, planned for and paid 10 Nov, had dropped out of that run)."""
+    po = {"source": "auto", "po": "PO-144008", "po_list": ["PO-144008"], "vendor": "Watson Gym Equipment",
+          "state": "VIC", "segment": "Commercial", "currency": "GBP", "flags": [], "assumed_paid": None,
+          "kind": "deposit", "line_id": "PO-144008|deposit", "amount_auto": 0.0, "due_auto": "2026-11-03",
+          "due_anchor": "order"}
+    rows, _ = P.merge([po], {"PO-144008|deposit": {"amount": 174.65}}, [], D("2026-11-09"), 4)
+    check(rows[0]["request_date"] == "2026-11-10" and rows[0]["status"] == "For Payment"
+          and not rows[0]["request_from_paid"], "unpaid: the app plans the deposit for the 10 Nov run")
+    st = {"amount": 174.65, "paid_date": "2026-11-10", "paid_amount": 174.65}
+    rows, _ = P.merge([po], {"PO-144008|deposit": st}, [], D("2026-11-16"), 4)
+    r = rows[0]
+    check(r["status"] == "Paid" and r["request_date"] == "2026-11-10" and r["request_from_paid"]
+          and r["request_stored"] == "" and not r["carried_from"] and not r["this_request"],
+          "paid 10 Nov with no request date saved: shown under the 10 Nov run, nothing stored")
+    rows, _ = P.merge([dict(po, line_id="PO-141337|balance", po="PO-141337", kind="balance", currency="USD",
+                            due_auto="2026-12-01", due_anchor="eta")],
+                      {"PO-141337|balance": {"paid_date": "2026-11-11"}}, [], D("2026-11-16"), 4)
+    check(rows[0]["request_date"] == "2026-11-10", "paid on a Wednesday: the Tuesday run before it")
+    rows, _ = P.merge([po], {"PO-144008|deposit": dict(st, request_date="2026-11-03")}, [], D("2026-11-16"), 4)
+    check(rows[0]["request_date"] == "2026-11-03" and not rows[0]["request_from_paid"],
+          "a saved request date always wins")
+    man = [{"id": 9, "po_refs": "PO-137130", "pay_type": "Customs Brokerage", "currency": "AUD", "amount": 1292.0,
+            "due_date": "2026-11-19", "request_date": None, "status": None, "paid_date": "2026-11-13"}]
+    rows, _ = P.merge([], {}, man, D("2026-11-16"), 4)
+    check(rows[0]["request_date"] == "2026-11-12", "an AUD charge paid on a Friday: the Thursday run before it")
+    rows, _ = P.merge([po], {"PO-144008|deposit": {"status": "Paid", "amount": 174.65}}, [], D("2026-11-16"), 4)
+    check(rows[0]["request_date"] is None, "Paid with no paid date: no run is made up")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
                test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_nov02,
-               test_nov06, test_nov13, test_nov13_check_point, test_data):
+               test_nov06, test_nov13, test_nov13_check_point, test_nov16, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

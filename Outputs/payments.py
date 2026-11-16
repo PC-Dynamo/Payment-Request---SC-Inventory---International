@@ -89,6 +89,15 @@ def next_request_day(day: dt.date, weekdays: tuple = DEFAULT_PAY_WEEKDAYS) -> dt
     return day
 
 
+def run_on_or_before(day: dt.date, weekdays: tuple = DEFAULT_PAY_WEEKDAYS) -> dt.date:
+    """`day` if it is a pay-run day, else the last pay-run day before it."""
+    for i in range(7):
+        c = day - dt.timedelta(days=i)
+        if c.weekday() in weekdays:
+            return c
+    return day
+
+
 def request_day_for(due: dt.date, today: dt.date, weekdays: tuple = DEFAULT_PAY_WEEKDAYS) -> dt.date:
     """The last pay-run day on/before `due`, but never before the next one."""
     nxt = next_request_day(today, weekdays)
@@ -603,6 +612,15 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
                 status = "Date TBC"
             else:
                 status = "For Payment" if request_day_for(due, today, wd) <= nxt_l else "Forecast"
+        request_from_paid = False
+        if req is None and status == "Paid" and _d(st.get("paid_date")):
+            # Paid before anyone saved a request date: the run the app planned showed
+            # only while the line was unpaid, so it dropped out of its run once Accounts
+            # logged the payment (16 Nov, Idelyn: PO-144008 deposit planned for and paid
+            # 10 Nov; PO-141337 balance paid early on 10 Nov). It belongs to the pay run
+            # on or before its paid date.
+            req = run_on_or_before(_d(st.get("paid_date")), wd)
+            request_from_paid = True
         if req is None and status not in ("Paid", "Not Payable", "Date TBC", "Awaiting Approval"):
             req = request_day_for(due, today, wd) if due else nxt_l
         carried = None
@@ -626,6 +644,7 @@ def merge(auto: list[dict], states: dict[str, dict], manual: list[dict],
             "payee": payee_of(row),
             "status_stored": st.get("status") or "",
             "request_stored": st.get("request_date") or "",
+            "request_from_paid": request_from_paid,
             "not_final": bool(not final and status not in ("Paid", "Not Payable", "Awaiting Approval")),
             "status": status,
             "due_date": _s(due),

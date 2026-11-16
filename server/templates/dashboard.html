@@ -477,7 +477,7 @@ function cell(r,c){
     case "vendor_entity": return `${esc(r.vendor_entity)}${r.flags&&r.flags.length?` <span class="flag" title="${esc(r.flags.join("\n"))}">⚠</span>`:""}`;
     case "po": return cin7Link(r)+(r.bulk?'<span class="rv" title="Bulk order">BULK</span>':r.review?`<span class="rv" title="${esc(r.review)}">CHECK</span>`:"");
     case "etd": return esc(dd(r.etd))+(r.etd_estimated&&r.etd?'<span class="muted" title="estimated from ETA and transit time">*</span>':"");
-    case "request_date": return esc(dd(r.request_date))+(r.carried_from?`<span class="muted" title="Planned for ${esc(dd(r.carried_from))}, not paid yet - moved to the next pay run">↻</span>`:"")
+    case "request_date": return (r.request_from_paid?`<span title="No request date was saved - shown under the pay run on or before the paid date">${esc(dd(r.request_date))}</span>`:esc(dd(r.request_date)))+(r.carried_from?`<span class="muted" title="Planned for ${esc(dd(r.carried_from))}, not paid yet - moved to the next pay run">↻</span>`:"")
       +(r.replanned_from?`<span class="muted" title="Planned for ${esc(dd(r.replanned_from))}; the due date has moved since, so the request date moved with it">⇢</span>`:"");
     case "due_date": return `<span class="${r.overdue?"od":""}" title="${esc(r.due_overridden?"due date set by hand":(r.terms_rule||""))}">${esc(dd(r.due_date))||'<span class="muted">TBC</span>'}</span>`;
     case "status": return `<span class="pill st-${esc(String(r.status).replace(/\s+/g,""))}" title="${esc(r.assumed_paid||"")}">${esc(statusLabel(r))}</span>`;
