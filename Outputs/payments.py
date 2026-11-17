@@ -94,14 +94,18 @@ def forwarder_dates(po: dict) -> dict:
     note = po.get("notes_eta")
     if note is not None:
         port, set_eta = _d(note.get("eta_port")), _d(note.get("eta"))
+        base = _d(note.get("cin7_base"))
         shifted = 0
-        # Cin7's ETA moved after the last note: from 26 Nov 2026 the ETA is kept
-        # in Retail Pro, which writes the date to Cin7 but not a note. Keep the
-        # note's buffer and follow Cin7. Up to NOTE_ETA_SLACK_DAYS is not a move:
+        # Cin7's ETA moved after the app read the last note: from 26 Nov 2026 the
+        # ETA is kept in Retail Pro, which writes the date to Cin7 but no note.
+        # Follow Cin7 by the move. `cin7_base` is Cin7's ETA when the note was
+        # read (update_cache.cin7_base), so a PO whose Cin7 ETA has never matched
+        # its note is not "moved" (PO-137126: note ETA 21 Dec, Cin7 14 Dec since
+        # September). Within NOTE_ETA_SLACK_DAYS of the note is not a move either:
         # "ETA 29 Nov 2026, without buffer" went into Cin7 as 2 Dec (PO-133628).
-        if port and set_eta and eta_cin7 and abs((eta_cin7 - set_eta).days) > NOTE_ETA_SLACK_DAYS:
-            shifted = (eta_cin7 - set_eta).days
-            port = port + (eta_cin7 - set_eta)
+        if port and set_eta and eta_cin7 and base and abs((eta_cin7 - base).days) > 1                 and abs((eta_cin7 - set_eta).days) > NOTE_ETA_SLACK_DAYS:
+            shifted = (eta_cin7 - base).days
+            port = port + (eta_cin7 - base)
         return {"eta_port": port, "etd": _d(note.get("etd")), "eta_cin7": eta_cin7,
                 "shifted": shifted, "note_stamp": note.get("stamp"), "source": "notes"}
     eta_port = _d(ship.get("eta_shipper"))

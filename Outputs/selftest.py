@@ -770,10 +770,32 @@ def test_nov17():
           "the note the ETA came from is on the line (a 'no change' note keeps the one before)")
     # From 26 Nov the ETA is kept in Retail Pro: Cin7's ETA moves, no new note.
     p = po("PO-140373")
+    p["notes_eta"]["cin7_base"] = U.cin7_base({}, p["notes_eta"], "2026-12-17")
     p["eta_cin7"] = "2026-12-24"
+    p["notes_eta"]["cin7_base"] = U.cin7_base(p["notes_eta"], dict(p["notes_eta"]), "2026-12-24")
+    check(p["notes_eta"]["cin7_base"] == "2026-12-17", "a move away from the note keeps the base")
     ln = P.auto_lines({"pos": {"PO-140373": p}}, [], {}, {}, {})[0][0]
     check(ln["eta_port"] == "2026-12-17" and any("after the last ETA note" in f for f in ln["flags"]),
           "Cin7's ETA moved a week after the last note: the forwarder ETA follows it, flagged")
+    # PO-137126: note "ETD Nov 13 + 4 weeks = Dec 11 + 10 days = ETA Dec 21", Cin7 14 Dec since
+    # September. First read: the base is Cin7 as it stands, so nothing has moved (17 Nov live: it
+    # had moved the balance from the 1 Dec run to 24 Nov).
+    n = U.notes_eta(hdr.format("18 Sep 2026 3:51 am") + "ready Nov 6, ETD Nov 13 + 4 weeks = Dec 11 + 10 days = ETA Dec 21\r\n")
+    n["cin7_base"] = U.cin7_base({"eta_port": "2026-12-11", "stamp": n["stamp"]}, n, "2026-12-14")
+    p = dict(po("PO-140373"), eta_cin7="2026-12-14", notes_eta=n)
+    ln = P.auto_lines({"pos": {"PO-137126": p}}, [], {}, {}, {})[0][0]
+    check(ln["eta_port"] == "2026-12-11" and not any("moved" in f for f in ln["flags"]),
+          "Cin7's ETA never matched the note: the note's port ETA stands")
+    # The note went in at 08:59 and Cin7's ETA (6 Dec -> 2 Dec) at 11:50 (PO-133628, 16 Nov):
+    # a refresh in between must not read the field change as a move.
+    n1 = U.notes_eta(notes["PO-133628"])
+    n1["cin7_base"] = U.cin7_base({"stamp": "2026-11-12T17:31", "cin7_base": "2026-12-06"}, n1, "2026-12-06")
+    n2 = U.notes_eta(notes["PO-133628"])
+    n2["cin7_base"] = U.cin7_base(n1, n2, "2026-12-02")
+    check(n1["cin7_base"] == "2026-12-06" and n2["cin7_base"] == "2026-12-02",
+          "Cin7 agreeing with the note again resets the base")
+    ln = P.auto_lines({"pos": {"PO-133628": dict(po("PO-133628"), notes_eta=n2)}}, [], {}, {}, {})[0][0]
+    check(ln["eta_port"] == "2026-11-29", "PO-133628 stays at the note's 29 Nov")
     p = po("PO-140373")
     p["notes_eta"] = U.notes_eta("17 Nov 2026 9:00 am - Retail Pro  \r\nRetail Pro PO-MLG1201\r\n")
     ln = P.auto_lines({"pos": {"PO-140373": p}}, [], {}, {}, {})[0][0]

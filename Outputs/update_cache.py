@@ -42,6 +42,7 @@ sys.path.insert(0, str(HERE))
 
 import delay_parse  # noqa: E402
 import masters as M  # noqa: E402
+import payments as P  # noqa: E402
 import sources as S  # noqa: E402
 from cin7_client import NOTE_FIELDS, PO_FIELDS, Cin7Client, fetch_products_usd  # noqa: E402
 
@@ -258,6 +259,20 @@ def notes_eta(comments: str | None) -> dict:
             "stamp": last.get("stamp"), "etd": a["etd_parsed"]}
 
 
+def cin7_base(prev: dict, note: dict, eta_cin7: str | None) -> str | None:
+    """Cin7's ETA as it stood when the app read the latest note - what a later
+    move of Cin7's ETA is measured from (payments.forwarder_dates). A new note,
+    or Cin7 agreeing with the note again, resets it; otherwise it is kept."""
+    if not eta_cin7:
+        return prev.get("cin7_base")
+    if prev.get("stamp") != note.get("stamp") or not prev.get("cin7_base"):
+        return eta_cin7
+    set_eta, cur = P._d(note.get("eta")), P._d(eta_cin7)
+    if set_eta and cur and abs((cur - set_eta).days) <= P.NOTE_ETA_SLACK_DAYS:
+        return eta_cin7
+    return prev["cin7_base"]
+
+
 def read_notes(client: Cin7Client, cache: dict, log: list[str]) -> dict:
     """Re-read the notes of every open PO (one light call per 250 POs). On a Cin7
     error the last reading is kept and the run carries on."""
@@ -272,7 +287,9 @@ def read_notes(client: Cin7Client, cache: dict, log: list[str]) -> dict:
     n = 0
     for ref, row in cache["pos"].items():
         if ref in got:
-            row["notes_eta"] = notes_eta(got[ref])
+            note = notes_eta(got[ref])
+            note["cin7_base"] = cin7_base(row.get("notes_eta") or {}, note, row.get("eta_cin7"))
+            row["notes_eta"] = note
             n += 1
     with_eta = sum(1 for r in cache["pos"].values()
                    if r.get("is_open") and (r.get("notes_eta") or {}).get("eta_port"))
