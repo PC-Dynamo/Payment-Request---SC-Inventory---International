@@ -4,8 +4,8 @@
 # Friday 08:05 and Monday 12:05 AWST - after the team updates ETAs in Cin7; SC
 # then updates the app by Monday 13:00 for the Tuesday pay run (Phoenix, 2 Nov
 # 2026; was Mon + Wed 13:00).
-# (The Shipment Schedule re-reads forwarder ETAs Mon + Thu 14:00; until then
-#  the app shifts forwarder ETAs by any change in Cin7's own ETA.)
+# (Each run reads the forwarder ETAs from the Order Department's Cin7 notes
+#  itself - it no longer waits for the Shipment Schedule's Mon + Thu 14:00 re-read.)
 # Prod runs UTC and AWST = UTC+8, so 08:05 AWST Fri = 00:05 UTC Fri and
 # 12:05 AWST Mon = 04:05 UTC Mon. Five past, not on the hour: po-gateway calls
 # Cin7 every 15 min, and on 13 Nov 2026 the 08:00 run was refused (HTTP 429):

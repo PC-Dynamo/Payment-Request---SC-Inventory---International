@@ -134,6 +134,7 @@ def unlisted_records(states: dict, auto: list[dict], snaps: list[dict], cache: d
             recs = [("full", recs[-1][1], recs[-1][2])]
         c = (cache.get("pos") or {}).get(po) or {}
         ship = c.get("ship") or {}
+        fd = P.forwarder_dates(c)
         for kind, lid, st in recs:
             amt = st.get("amount") if st.get("amount") is not None else st.get("paid_amount")
             out.append({
@@ -143,8 +144,9 @@ def unlisted_records(states: dict, auto: list[dict], snaps: list[dict], cache: d
                 "segment": c.get("segment") or "Retail", "segment_mixed": c.get("segment_mixed"),
                 "stage": c.get("stage"), "stage_raw": c.get("stage_raw"), "bulk": False,
                 "entry_date": c.get("po_date"), "supplier_invoice": c.get("supplier_invoice"),
-                "etd": ship.get("etd"), "etd_estimated": False,
-                "eta_port": ship.get("eta_shipper"), "eta_cin7": c.get("eta_cin7") or ship.get("eta"),
+                "etd": P._s(fd["etd"]), "etd_estimated": False,
+                "eta_port": P._s(fd["eta_port"]), "eta_cin7": P._s(fd["eta_cin7"]),
+                "eta_note": fd["note_stamp"],
                 "container": ship.get("container_raw") or c.get("container_cin7") or "",
                 "forwarder": ship.get("forwarder") or "",
                 "po_value_usd": c.get("value_usd"), "po_value_aud": c.get("value_aud"),
@@ -196,6 +198,7 @@ def build_payload() -> dict:
             "cin7_calls": meta.get("cin7_calls"),
             "po_watermark": meta.get("po_watermark"),
             "shipment": meta.get("shipment"),
+            "notes": meta.get("notes"),
             "master": meta.get("master"),
             "master_counts": meta.get("master_counts"),
             "terms": {**(meta.get("terms") or {}),
@@ -227,8 +230,8 @@ def build_payload() -> dict:
                            "segment": r.get("segment"), "stage": r.get("stage"),
                            "cin7_id": r.get("cin7_id"),
                            "forwarder": (r.get("ship") or {}).get("forwarder") or "",
-                           "etd": (r.get("ship") or {}).get("etd"),
-                           "eta_port": (r.get("ship") or {}).get("eta_shipper"),
+                           "etd": P._s(P.forwarder_dates(r)["etd"]),
+                           "eta_port": P._s(P.forwarder_dates(r)["eta_port"]),
                            "eta_cin7": r.get("eta_cin7"),
                            "container": (r.get("ship") or {}).get("container_raw")
                            or r.get("container_cin7") or ""}

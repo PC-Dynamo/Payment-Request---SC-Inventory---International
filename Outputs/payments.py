@@ -58,6 +58,9 @@ TIMING_MAD_MAX = 10
 # (PO-131113, 26 Oct). A deposit or in-advance payment follows the PI, not the
 # ship dates: its PO date moves when a draft is approved (VOG PO-140079).
 REPLAN_MIN_DAYS = 7
+# Cin7's ETA may sit this many days off the ETA a note set without having moved
+# (16 Nov 2026: "ETA 29 Nov, without buffer" was typed into Cin7 as 2 Dec).
+NOTE_ETA_SLACK_DAYS = 3
 # A paid bulk-order deposit older than this is no longer chased onto shipment POs.
 BULK_WAIT_DAYS = 180
 
@@ -73,6 +76,43 @@ def _d(s) -> dt.date | None:
 
 def _s(d: dt.date | None) -> str | None:
     return d.isoformat() if d else None
+
+
+def forwarder_dates(po: dict) -> dict:
+    """ETA to port, ETD and Cin7's own ETA for a cached PO.
+
+    From 17 Nov 2026 the forwarder's ETA and the ETD come from the Order
+    Department's Cin7 notes, read at every refresh (update_cache.notes_eta), so
+    they match the latest note. If Cin7's ETA has moved since that note, the
+    forwarder ETA moves with it. Until a PO's notes have been read once, the
+    Shipment Schedule's reading is used (it re-reads the notes Mon + Thu 14:00),
+    moved by any later change in Cin7's own ETA. That bridge assumes the buffer
+    stays the same: on 16 Nov the Order Department changed buffers, and the
+    Monday refresh showed four wrong ETAs (Idelyn, 17 Nov)."""
+    ship = po.get("ship") or {}
+    eta_cin7 = _d(po.get("eta_cin7")) or _d(ship.get("eta"))
+    note = po.get("notes_eta")
+    if note is not None:
+        port, set_eta = _d(note.get("eta_port")), _d(note.get("eta"))
+        shifted = 0
+        # Cin7's ETA moved after the last note: from 26 Nov 2026 the ETA is kept
+        # in Retail Pro, which writes the date to Cin7 but not a note. Keep the
+        # note's buffer and follow Cin7. Up to NOTE_ETA_SLACK_DAYS is not a move:
+        # "ETA 29 Nov 2026, without buffer" went into Cin7 as 2 Dec (PO-133628).
+        if port and set_eta and eta_cin7 and abs((eta_cin7 - set_eta).days) > NOTE_ETA_SLACK_DAYS:
+            shifted = (eta_cin7 - set_eta).days
+            port = port + (eta_cin7 - set_eta)
+        return {"eta_port": port, "etd": _d(note.get("etd")), "eta_cin7": eta_cin7,
+                "shifted": shifted, "note_stamp": note.get("stamp"), "source": "notes"}
+    eta_port = _d(ship.get("eta_shipper"))
+    shifted = 0
+    ship_cin7 = _d(ship.get("eta"))
+    # One day is ignored: the two apps round Cin7's UTC timestamps differently.
+    if eta_port and eta_cin7 and ship_cin7 and abs((eta_cin7 - ship_cin7).days) > 1:
+        shifted = (eta_cin7 - ship_cin7).days
+        eta_port = eta_port + (eta_cin7 - ship_cin7)
+    return {"eta_port": eta_port, "etd": _d(ship.get("etd")), "eta_cin7": eta_cin7,
+            "shifted": shifted, "note_stamp": None, "source": "shipment"}
 
 
 def weekdays_for(currency: str | None, pay_weekdays: dict | None = None) -> tuple:
@@ -293,21 +333,12 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
         if awaiting:
             stats["awaiting_approval"] += 1
 
-        eta_port = _d(ship.get("eta_shipper"))
-        eta_cin7 = _d(po.get("eta_cin7")) or _d(ship.get("eta"))
-        # Monday's ETA updates reach Cin7 mostly before 13:00 (81% since Aug),
-        # but the Shipment Schedule re-reads forwarder ETAs only at 14:00. This
-        # app reads Cin7's own ETA live, so when that has moved since the
-        # Shipment Schedule's last run, move the forwarder ETA by the same amount
-        # (Cin7 ETA = forwarder ETA + a fixed buffer, usually 7 days). One day is
-        # ignored: the two apps round Cin7's UTC timestamps differently.
-        eta_shifted = 0
-        ship_cin7 = _d(ship.get("eta"))
-        if eta_port and eta_cin7 and ship_cin7 and abs((eta_cin7 - ship_cin7).days) > 1:
-            eta_shifted = (eta_cin7 - ship_cin7).days
-            eta_port = eta_port + (eta_cin7 - ship_cin7)
+        # Forwarder ETA / ETD from the Order Department's Cin7 notes, read at
+        # this refresh (Monday's ETA updates are mostly in before 13:00).
+        fd = forwarder_dates(po)
+        eta_port, eta_cin7, eta_shifted = fd["eta_port"], fd["eta_cin7"], fd["shifted"]
         eta_used = eta_port or eta_cin7
-        etd = _d(ship.get("etd"))
+        etd = fd["etd"]
         etd_est = False
         if not etd and eta_used:
             weeks = transit.get(po.get("state") or "", 5)
@@ -323,9 +354,12 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             flags.append(f"USD {po.get('usd_source')}")
         if not eta_port and eta_cin7:
             flags.append("no forwarder ETA - Cin7 ETA used")
-        if eta_shifted:
+        if eta_shifted and fd["source"] == "notes":
+            flags.append(f"forwarder ETA moved {eta_shifted:+d} days with Cin7's ETA, "
+                         "which changed after the last ETA note")
+        elif eta_shifted:
             flags.append(f"forwarder ETA moved {eta_shifted:+d} days with Cin7's ETA "
-                         "(Shipment Schedule not refreshed yet)")
+                         "(Cin7 notes not read yet)")
         if etd_est and rule["balance_anchor"] == "etd":
             flags.append(f"ETD estimated (ETA - {transit.get(po.get('state') or '', 5)} wks)")
         if po.get("unmapped_skus"):
@@ -363,6 +397,7 @@ def auto_lines(cache: dict, terms_rows: list[dict], overrides: dict,
             "supplier_invoice": po.get("supplier_invoice"),
             "etd": _s(etd), "etd_estimated": etd_est,
             "eta_port": _s(eta_port), "eta_cin7": _s(eta_cin7),
+            "eta_note": fd["note_stamp"],
             "container": ship.get("container_raw") or po.get("container_cin7") or "",
             "forwarder": ship.get("forwarder") or "",
             "delay_days": ship.get("delay_days"),

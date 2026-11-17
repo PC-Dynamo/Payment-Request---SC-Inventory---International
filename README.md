@@ -63,7 +63,8 @@ Live: <https://sc.dynamofitness.au/Applications/payment-request/>
 |---|---|---|
 | Open POs, AUD value, stage, branch | Cin7 v1 API, **read-only**, `modifiedDate` delta only | Fri 08:05 + Mon 12:05 AWST (after the team's Cin7 ETA updates; SC updates the app by Mon 13:00) |
 | USD value | qty × Cin7 `costUSD`, pinned per PO line when first seen | with the POs; product costs weekly |
-| ETA to port, ETD, container, forwarder | Shipment Schedule cache `/srv/team/sc/shipment-schedule` | it rebuilds Mon + Thu 14:00 AWST |
+| ETA to port, ETD | The Order Department's Cin7 notes (`internalComments`) of every open PO, parsed with the Shipment Schedule's `delay_parse.py` (copy in `Outputs/`); if Cin7's own ETA moved after the last note, the forwarder ETA moves with it | every refresh |
+| Container, forwarder (and the ETA until a PO's notes are first read) | Shipment Schedule cache `/srv/team/sc/shipment-schedule` | it rebuilds Mon + Thu 14:00 AWST |
 | Payment terms | SC Master Data cache `/srv/team/sc/master-data` | **weekly** (Monday run) |
 | Branch → state, SKU → Retail/Commercial, supplier → Local/International | *Supplier and Branch Info.xlsx* (OneDrive / SharePoint) | every run; forced re-read when a new SKU or supplier cannot be identified |
 | Status, paid dates, manual lines | `Outputs/ledger.db` (SQLite), people's edits | live |
@@ -98,7 +99,8 @@ Payment-term exceptions (special arrangements) and supplier-name aliases are in
 Outputs/
   cin7_client.py        read-only Cin7 client (GET only)
   masters.py            Supplier and Branch Info master
-  sources.py            shipment-schedule ETA + master-data payment terms
+  sources.py            shipment-schedule cache + master-data payment terms
+  delay_parse.py        Order Department's Cin7 notes -> ETA to port / ETD (copy of the Shipment Schedule's)
   update_cache.py       Cin7 delta -> payment_cache.json
   terms.py              payment terms -> milestones
   payments.py           milestones + ledger -> dated payment lines
@@ -143,8 +145,12 @@ docker exec payment-request-app-1 python /app/Outputs/build_report.py
 - Cron (UTC; 08:05 AWST Fri = 00:05 UTC Fri, 12:05 AWST Mon = 04:05 UTC Mon; five past
   so it misses po-gateway's Cin7 sync every 15 min, which got the 13 Nov 08:00 run refused):
   `5 0 * * 5` and `5 4 * * 1 /srv/team/sc/payment-request/refresh-payment.sh`
-- Monday 12:05 runs before the Shipment Schedule's 14:00 ETA re-read; the app moves
-  forwarder ETAs by any change in Cin7's own ETA to bridge that hour.
+- Each refresh reads the Cin7 notes itself, so Monday 12:05 has that morning's
+  forwarder ETAs without waiting for the Shipment Schedule's 14:00 re-read (17 Nov
+  2026: shifting the Thursday reading by Cin7's ETA change went wrong when the
+  Order Department changed buffers). From 26 Nov 2026 ETAs are kept in Retail Pro,
+  which writes the ETA date to Cin7 but no note: the app then keeps the last
+  note's buffer and follows Cin7's ETA.
 - OneDrive backup cron (UTC; 16:30 AWST Wed + Fri = 08:30 UTC):
   `30 8 * * 3,5 /srv/team/sc/payment-request/upload-onedrive.sh` (log: `upload.log`)
 - Back up `Outputs/ledger.db`: it is the only data here that cannot be rebuilt from Cin7.

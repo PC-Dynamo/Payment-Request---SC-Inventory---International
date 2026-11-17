@@ -722,10 +722,70 @@ def test_nov16():
     check(rows[0]["request_date"] is None, "Paid with no paid date: no run is made up")
 
 
+def test_nov17():
+    """17 Nov (Idelyn): the forwarder ETA comes from the Order Department's Cin7 notes,
+    read at each refresh. Monday's 12:05 refresh had shifted the Shipment Schedule's
+    Thursday reading by Cin7's ETA change, which went wrong when the buffer changed."""
+    import update_cache as U
+    hdr = "{} - Dynamo Fitness Order Department  \r\n"
+    notes = {
+        "PO-133628": (hdr.format("16 Nov 2026 8:59 am") + "As per MF update report 16 Nov\r\nETA 29 Nov 2026, without buffer\r\n\r\n"
+                      + hdr.format("12 Nov 2026 5:31 pm") + "As per MF update report 12 Nov, no change\r\n\r\n"
+                      + hdr.format("9 Nov 2026 9:42 am") + "As per MF update report 9 Nov\r\n"
+                      "ETA 29 Nov 2026 + 7 days buffer = ETA 6 Dec 2026\r\n"),
+        "PO-135781": (hdr.format("16 Nov 2026 8:59 am") + "As per Ice Cargo update report 16 Nov\r\nETA 19 Nov 2026, without buffer\r\n\r\n"
+                      + hdr.format("12 Nov 2026 5:35 pm") + "As per Ice Cargo update report 12 Nov\r\nETA 21 Nov 2026, without buffer\r\n\r\n"
+                      + hdr.format("21 Sep 2026 12:39 pm") + "ready Oct 23 + 5 weeks= Nov 27  + 10 days = ETA Dec 7\r\n"),
+        "PO-140373": (hdr.format("16 Nov 2026 8:52 am") + "As per MF update report 16 Nov, no change\r\n\r\n"
+                      + hdr.format("12 Nov 2026 5:35 pm") + "As per MF update report 12 Nov\r\n"
+                      "ETA 10 Dec 2026 + 7 days buffer = ETA 17 Dec 2026\r\n\r\n"
+                      + hdr.format("13 Oct 2026 2:59 pm") + "ETD about mid nov + 6 weeks + 10 days = ETA 9 Jan\r\n"),
+        "PO-140378": (hdr.format("16 Nov 2026 8:52 am") + "As per MF update report 16 Nov, no change\r\n\r\n"
+                      + hdr.format("12 Nov 2026 5:35 pm") + "As per MF update report 12 Nov\r\n"
+                      "ETA 27 Dec 2026 + 7 days buffer = ETA 4 Jan 2026\r\n\r\n"
+                      + hdr.format("5 Oct 2026 9:27 am") + "ETD about mid nov + 7 weeks + 10 days = ETA 18 Jan\r\n"),
+    }
+    # Cin7's own ETA on 16 Nov, and the Shipment Schedule's Thu 12 Nov 14:00 reading.
+    live = {"PO-133628": ("2026-12-02", "2026-11-29", "2026-12-06"), "PO-135781": ("2026-11-22", "2026-11-27", "2026-12-07"),
+            "PO-140373": ("2026-12-17", "2027-01-09", "2027-01-09"), "PO-140378": ("2027-01-04", "2027-01-18", "2027-01-18")}
+    want = {"PO-133628": "2026-11-29", "PO-135781": "2026-11-19", "PO-140373": "2026-12-10", "PO-140378": "2026-12-27"}
+    def po(ref, note=True):
+        cin7, s_port, s_eta = live[ref]
+        r = {"is_open": True, "stage_raw": "On Its Way", "is_approved": True, "supplier": "X", "po_date": "2026-10-02",
+             "eta_cin7": cin7, "value_usd": 100.0, "usd_exact": True, "state": "WA",
+             "ship": {"eta_shipper": s_port, "eta": s_eta}}
+        if note:
+            r["notes_eta"] = U.notes_eta(notes[ref])
+        return r
+    old, _ = P.auto_lines({"pos": {ref: po(ref, note=False) for ref in want}}, [], {}, {}, {})
+    check({ln["po"]: ln["eta_port"] for ln in old} == {"PO-133628": "2026-11-25", "PO-135781": "2026-11-12",
+                                                       "PO-140373": "2026-12-17", "PO-140378": "2027-01-04"},
+          "the old bridge (Thursday reading + Cin7 shift) gives the wrong dates Idelyn saw")
+    lines, _ = P.auto_lines({"pos": {ref: po(ref) for ref in want}}, [], {}, {}, {})
+    got = {ln["po"]: ln["eta_port"] for ln in lines}
+    check(got == want, f"forwarder ETA = the latest Cin7 note (got {got})")
+    check(all(not any("moved" in f for f in ln["flags"]) for ln in lines),
+          "Cin7's ETA 3 days after a 'without buffer' note (2 Dec vs 29 Nov) is not a move")
+    check(next(ln for ln in lines if ln["po"] == "PO-140373")["eta_note"] == "2026-11-12T17:35",
+          "the note the ETA came from is on the line (a 'no change' note keeps the one before)")
+    # From 26 Nov the ETA is kept in Retail Pro: Cin7's ETA moves, no new note.
+    p = po("PO-140373")
+    p["eta_cin7"] = "2026-12-24"
+    ln = P.auto_lines({"pos": {"PO-140373": p}}, [], {}, {}, {})[0][0]
+    check(ln["eta_port"] == "2026-12-17" and any("after the last ETA note" in f for f in ln["flags"]),
+          "Cin7's ETA moved a week after the last note: the forwarder ETA follows it, flagged")
+    p = po("PO-140373")
+    p["notes_eta"] = U.notes_eta("17 Nov 2026 9:00 am - Retail Pro  \r\nRetail Pro PO-MLG1201\r\n")
+    ln = P.auto_lines({"pos": {"PO-140373": p}}, [], {}, {}, {})[0][0]
+    check(ln["eta_port"] is None and any("Cin7 ETA used" in f for f in ln["flags"]),
+          "notes with no ETA: Cin7's ETA is used, flagged, never the Shipment Schedule's old reading")
+    check(U.notes_eta(None) == {"eta_port": None, "eta": None, "stamp": None, "etd": None}, "no notes at all")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
                test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_nov02,
-               test_nov06, test_nov13, test_nov13_check_point, test_nov16, test_data):
+               test_nov06, test_nov13, test_nov13_check_point, test_nov16, test_nov17, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")

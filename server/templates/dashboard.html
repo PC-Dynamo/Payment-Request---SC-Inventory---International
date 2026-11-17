@@ -476,6 +476,7 @@ function cell(r,c){
     case "sel": return r.status==="For Payment"?`<input type="checkbox" class="sel" data-id="${esc(r.line_id)}" ${selected.has(r.line_id)?"checked":""} aria-label="select">`:"";
     case "vendor_entity": return `${esc(r.vendor_entity)}${r.flags&&r.flags.length?` <span class="flag" title="${esc(r.flags.join("\n"))}">⚠</span>`:""}`;
     case "po": return cin7Link(r)+(r.bulk?'<span class="rv" title="Bulk order">BULK</span>':r.review?`<span class="rv" title="${esc(r.review)}">CHECK</span>`:"");
+    case "eta_port": return r.eta_note&&r.eta_port?`<span title="From the Order Department's Cin7 note of ${esc(dd(r.eta_note))} ${esc(String(r.eta_note).slice(11,16))}">${esc(dd(r.eta_port))}</span>`:esc(dd(r.eta_port));
     case "etd": return esc(dd(r.etd))+(r.etd_estimated&&r.etd?'<span class="muted" title="estimated from ETA and transit time">*</span>':"");
     case "request_date": return (r.request_from_paid?`<span title="No request date was saved - shown under the pay run on or before the paid date">${esc(dd(r.request_date))}</span>`:esc(dd(r.request_date)))+(r.carried_from?`<span class="muted" title="Planned for ${esc(dd(r.carried_from))}, not paid yet - moved to the next pay run">↻</span>`:"")
       +(r.replanned_from?`<span class="muted" title="Planned for ${esc(dd(r.replanned_from))}; the due date has moved since, so the request date moved with it">⇢</span>`:"");
@@ -754,7 +755,7 @@ function renderNotes(){
   const li=a=>a.filter(Boolean).map(x=>`<li>${x}</li>`).join("");
   $("#notes").innerHTML=`<ul class="notes">${li([
     `<b>Cin7</b> (read-only): cache built ${esc(m.cache_built_awst)} (${esc(m.cache_mode)}, ${esc(m.cin7_calls)} API calls). Only POs modified since the last run are pulled.`,
-    `<b>ETA to port</b>: Shipment Schedule cache built ${esc(m.shipment&&m.shipment.generated_awst)} (${esc(m.shipment&&m.shipment.status)}). Forwarder ETA is used; Cin7 ETA when there is none.`,
+    `<b>ETA to port</b>: the forwarder's ETA and the ETD from the Order Department's Cin7 notes, read at each refresh (${esc(m.notes&&m.notes.with_eta)} open POs have one; ${esc(m.notes&&m.notes.status)}). If Cin7's own ETA has moved since the last note, the forwarder ETA moves with it. Cin7 ETA is used when there is no forwarder ETA. Forwarder and container: Shipment Schedule cache built ${esc(m.shipment&&m.shipment.generated_awst)} (${esc(m.shipment&&m.shipment.status)}).`,
     `<b>Payment terms</b>: SC Master Data, snapshot ${esc(m.terms&&m.terms.snapshot_generated)}; re-read weekly (${esc(m.terms&&m.terms.status)}).`,
     `<b>Supplier &amp; Branch master</b>: ${esc(m.master&&m.master.status)}, file date ${esc(m.master&&m.master.file_date)}.`,
     `<b>Scope</b>: ${s.open_pos} open international POs; ${s.bulk_excluded} China-stock bulk orders excluded (no vessel / ETA yet). Pay runs: <b>Tuesday</b> for supplier payments and USD freight, <b>Thursday</b> for AUD charges. A line joins the last pay run on or before its due date; a line still unpaid after its pay run moves to the next one (↻).`,
@@ -876,7 +877,7 @@ async function load(first=true){
     const r=await fetch("api/data",{cache:"no-store"});const j=await r.json();
     if(!r.ok)throw new Error(j.error||r.status);
     DATA=j.rows;META=j.meta;SPECIAL=j.special_arrangements||{};CHECKPTS=j.check_points||[];
-    $("#sub").innerHTML=`Next pay run <b>Tue ${esc(dd(META.next_request))}</b> (USD: suppliers &amp; freight) · <b>Thu ${esc(dd(META.next_request_aud))}</b> (AUD charges) · refreshed ${esc(META.report_built_awst)} · ETA from Shipment Schedule ${esc(META.shipment&&META.shipment.generated_awst||"—")} · auto-refresh from Cin7 Fri 08:05 &amp; Mon 12:05 AWST (SC updates by Mon 13:00 for the Tuesday run)`;
+    $("#sub").innerHTML=`Next pay run <b>Tue ${esc(dd(META.next_request))}</b> (USD: suppliers &amp; freight) · <b>Thu ${esc(dd(META.next_request_aud))}</b> (AUD charges) · refreshed ${esc(META.report_built_awst)} · forwarder ETA from the Cin7 notes at each refresh · auto-refresh from Cin7 Fri 08:05 &amp; Mon 12:05 AWST (SC updates by Mon 13:00 for the Tuesday run)`;
     if(first){buildFilters();let t="reg";try{t=localStorage.getItem("prtab")||"reg"}catch(e){}setTab(t)}else fillSelects();
     render();renderNotes();
   }catch(err){$("#sub").textContent="Could not load the report: "+err.message}

@@ -94,6 +94,11 @@ PO_FIELDS = (
 )
 
 
+# The Order Department logs each forwarder ETA in the PO's notes; read them for
+# every open PO at each refresh (a light call: no line items).
+NOTE_FIELDS = "id,reference,modifiedDate,internalComments"
+
+
 def fetch_purchase_orders(client: Cin7Client, where: str) -> list[dict]:
     """All non-void POs matching `where`."""
     return [p for p in client.paginate("PurchaseOrders",

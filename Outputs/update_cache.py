@@ -10,7 +10,9 @@ One row per international PO (PO level, not SKU level). Each run:
   3. pulls from Cin7 only the POs modified since the last run (`modifiedDate`
      watermark) - a first run, or --full, reads every open PO plus the last
      FULL_DAYS of receipts instead;
-  4. merges ETA to port / ETD / forwarder from the shipment-schedule cache;
+  4. reads the Order Department's notes (`internalComments`) of every open PO
+     for the forwarder's ETA to port and the ETD, and merges the forwarder /
+     container from the shipment-schedule cache;
   5. re-rolls every cached PO against the current master, and if a SKU or a
      supplier cannot be identified, re-reads the master once and tries again.
 
@@ -38,9 +40,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import delay_parse  # noqa: E402
 import masters as M  # noqa: E402
 import sources as S  # noqa: E402
-from cin7_client import PO_FIELDS, Cin7Client, fetch_products_usd  # noqa: E402
+from cin7_client import NOTE_FIELDS, PO_FIELDS, Cin7Client, fetch_products_usd  # noqa: E402
 
 CACHE = HERE / "payment_cache.json"
 AWST = dt.timezone(dt.timedelta(hours=8))
@@ -237,6 +240,46 @@ def build_row(po: dict, mst: dict, prev: dict) -> dict:
     }
 
 
+def notes_eta(comments: str | None) -> dict:
+    """The forwarder's ETA to port and the ETD from the Order Department's notes,
+    read the way the Shipment Schedule reads them (delay_parse): the newest entry
+    that states each one. A "no change" entry keeps the one before it, and "ETA
+    29 Nov 2026, without buffer" is a port ETA of 29 Nov.
+
+    17 Nov 2026 (Idelyn): the app took these from the Shipment Schedule, which
+    re-reads the notes only Mon + Thu 14:00, and shifted them by any later move
+    of Cin7's own ETA. When the Order Department changed the buffer (7 or 10
+    days -> none), the shift gave wrong dates: PO-133628 26 Nov (note 29 Nov),
+    PO-140373 17 Dec (10 Dec), PO-140378 4 Jan (27 Dec), PO-135781 12 Nov (19 Nov)."""
+    a = delay_parse.analyse(comments)
+    # The entry that gave the port ETA, with the (buffered) ETA it set in Cin7.
+    last = next((e for e in reversed(a["entries"]) if e.get("eta_shipper")), {})
+    return {"eta_port": last.get("eta_shipper"), "eta": last.get("eta"),
+            "stamp": last.get("stamp"), "etd": a["etd_parsed"]}
+
+
+def read_notes(client: Cin7Client, cache: dict, log: list[str]) -> dict:
+    """Re-read the notes of every open PO (one light call per 250 POs). On a Cin7
+    error the last reading is kept and the run carries on."""
+    meta = {"status": "ok", "read_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")}
+    try:
+        got = {po.get("reference") or str(po.get("id")): po.get("internalComments")
+               for po in client.paginate("PurchaseOrders", {"where": "fullyReceivedDate IS NULL",
+                                                            "fields": NOTE_FIELDS})}
+    except Exception as exc:  # noqa: BLE001 - keep the last reading
+        log.append(f"notes: NOT read ({exc}) - kept the last reading")
+        return {**(cache.get("meta", {}).get("notes") or {}), "status": f"failed: {exc}"}
+    n = 0
+    for ref, row in cache["pos"].items():
+        if ref in got:
+            row["notes_eta"] = notes_eta(got[ref])
+            n += 1
+    with_eta = sum(1 for r in cache["pos"].values()
+                   if r.get("is_open") and (r.get("notes_eta") or {}).get("eta_port"))
+    log.append(f"notes: read {len(got)} open POs, {n} cached; {with_eta} open POs have a forwarder ETA")
+    return {**meta, "pos": n, "with_eta": with_eta}
+
+
 def _is_international(row: dict) -> bool:
     o = row["origin_cin7"].lower()
     if o:
@@ -395,7 +438,10 @@ def run(full: bool = False, refresh_terms: bool = False) -> dict:
         log.append(f"after re-read: {len(unknown_skus)} SKUs / {len(unknown_sup)} "
                    "suppliers still unidentified")
 
-    # ---- ETA to port etc. from the shipment-schedule cache
+    # ---- Forwarder ETA / ETD from the Order Department's notes, every run
+    notes_meta = read_notes(client, cache, log)
+
+    # ---- Forwarder, container (and the ETA fallback) from the shipment-schedule cache
     ship, ship_meta = S.load_shipment_eta()
     hit = 0
     for ref, row in cache["pos"].items():
@@ -417,6 +463,7 @@ def run(full: bool = False, refresh_terms: bool = False) -> dict:
         "master_counts": mst["counts"],
         "terms": {**terms_meta, "fetched_utc": S.load_payment_terms().get("fetched_utc")},
         "shipment": ship_meta,
+        "notes": notes_meta,
         "unmapped_skus": unknown_skus,
         "unknown_suppliers": unknown_sup,
         "cin7_calls": client.calls,
