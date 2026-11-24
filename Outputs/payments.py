@@ -166,21 +166,39 @@ def container_shares(rows: list[dict]) -> None:
     to split a shared container's freight and AUD charges. Sets `cont_pct` (0-100) on
     every PO line with one container number; a PO split over several containers, a line
     added by hand and a PO without a USD value get none. Paid lines archived after Cin7
-    received their PO still count, so the shares of a container add up to 100%."""
+    received their PO still count, so the shares of a container add up to 100%.
+
+    24 Nov 2026 (Idelyn, TRDU9243264): shares are to one decimal and a container's
+    shares add up to exactly 100.0% - rounding each PO on its own showed 4.4 / 16.2 /
+    6.1 / 32.9 / 40.4 as 4 + 16 + 6 + 33 + 40 = 99%."""
     value: dict[str, dict[str, float]] = {}
     for r in rows:
         nums = [n for n in (r.get("container_number") or "").split(", ") if n]
         if r.get("source") == "auto" and len(nums) == 1 and r.get("po_value_usd"):
             value.setdefault(nums[0], {})[r["po"]] = float(r["po_value_usd"])
+    shares = {cont: shares_to_100(pos) for cont, pos in value.items()}
     for r in rows:
         r["cont_pct"] = None
         nums = [n for n in (r.get("container_number") or "").split(", ") if n]
         if r.get("source") != "auto" or len(nums) != 1:
             continue
-        pos = value.get(nums[0]) or {}
-        total = sum(pos.values())
-        if r.get("po") in pos and total > 0:
-            r["cont_pct"] = round(pos[r["po"]] / total * 100, 1)
+        r["cont_pct"] = (shares.get(nums[0]) or {}).get(r.get("po"))
+
+
+def shares_to_100(values: dict[str, float]) -> dict[str, float]:
+    """Each key's share of the total in % to one decimal, adding up to exactly 100.0:
+    every share is rounded down to a tenth and the tenths left over go to the shares
+    that lost the most (largest remainder; a tie goes to the larger value). Empty when
+    the total is not positive."""
+    total = sum(values.values())
+    if total <= 0:
+        return {}
+    exact = {k: v / total * 1000 for k, v in values.items()}         # in tenths of a %
+    tenths = {k: int((x + 1e-9) // 1) for k, x in exact.items()}
+    left = 1000 - sum(tenths.values())
+    for k in sorted(exact, key=lambda k: (tenths[k] - exact[k], -values[k], k))[:left]:
+        tenths[k] += 1
+    return {k: t / 10 for k, t in tenths.items()}
 
 
 # Who is paid. Rizqi (UAT): keep factory invoices apart from forwarder /

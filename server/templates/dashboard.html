@@ -457,7 +457,7 @@ const ALLCOLS=[   // [key, header, width weight (px at ~1700 wide), kind, editab
   ["paid_amount_aud","Paid Amount (AUD)",68,"money","paid_amount_aud"],
   ["comment","Comment",104,"text","comment"],
   ["container_number","Container Number",70,"text"],
-  ["cont_pct","%",28,"","","Share of the container, by PO value (USD): this PO ÷ all POs in the same container. A split by volume (CBM) can differ by a few points."],
+  ["cont_pct","%",36,"","","Share of the container, by PO value (USD): this PO ÷ all POs in the same container, to one decimal; a container's shares add up to exactly 100%. A split by volume (CBM) can differ by a few points."],
   ["edit","",48],
 ];
 let COLS=ALLCOLS;
@@ -487,7 +487,7 @@ function cell(r,c){
     case "paid_amount": return money(r.paid_amount);
     case "paid_currency": return r.paid_currency?`<span class="${r.paid_currency_default?"muted":""}" title="${r.paid_currency_default?"the line's currency - pick another if it was paid in a different one":""}">${esc(r.paid_currency)}</span>`:"";
     case "paid_amount_aud": return r.paid_amount_aud!=null?`<span class="${r.paid_aud_default?"muted":""}" title="${r.paid_aud_default?"paid in AUD":""}">${money(r.paid_amount_aud)}</span>`:"";
-    case "cont_pct": return r.cont_pct!=null?fmt(r.cont_pct,0)+"%":"";
+    case "cont_pct": return r.cont_pct!=null?fmt(r.cont_pct,1)+"%":"";
     case "finalised": return ["Paid","Not Payable"].includes(r.status)?"":
       `<input type="checkbox" class="fin" data-id="${esc(r.line_id)}" ${r.finalised?"checked":""} title="PI / amount confirmed (untick = peach, not finalised)">`;
     case "edit": {

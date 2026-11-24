@@ -367,7 +367,7 @@ def _cell_values(row: dict) -> dict:
     vals["_status_type"] = status_type(row)
     # "%" = the PO's share of its container, as in the team's workbook (not the
     # deposit / balance percentage, which the payment type already says)
-    vals["_pct"] = (row["cont_pct"] / 100.0) if row.get("cont_pct") is not None else None
+    vals["_pct"] = round(row["cont_pct"] / 100.0, 4) if row.get("cont_pct") is not None else None
     return vals
 
 
@@ -382,7 +382,7 @@ def _write_cell(ws, r, i, v, kind, border=None):
     elif kind == "money":
         c.number_format = "#,##0.00"
     elif kind == "pct":
-        c.number_format = "0%"
+        c.number_format = "0.0%"
     return c
 
 
@@ -514,7 +514,7 @@ def _sheet_app_register(ws, rows: list[dict], meta: dict, subtitle: str = "") ->
             elif kind == "money":
                 c.number_format = "#,##0.00"
             elif kind == "pct":
-                c.number_format = "0%"
+                c.number_format = "0.0%"
         if row.get("not_final"):            # the team's peach = not finalised yet
             for i in range(1, len(COLUMNS) + 1):
                 ws.cell(row=r, column=i).fill = PatternFill("solid", fgColor="FCE4D6")

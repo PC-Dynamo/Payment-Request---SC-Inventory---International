@@ -804,10 +804,41 @@ def test_nov17():
     check(U.notes_eta(None) == {"eta_port": None, "eta": None, "stamp": None, "etd": None}, "no notes at all")
 
 
+def test_nov24():
+    """24 Nov (Idelyn, TRDU9243264): a container's "%" shares add up to exactly 100.0%;
+    rounding each PO on its own showed 4 + 16 + 6 + 33 + 40 = 99%."""
+    import build_report as BR
+    s = P.shares_to_100({"PO-1": 1.0, "PO-2": 1.0, "PO-3": 1.0})
+    check(sorted(s.values()) == [33.3, 33.3, 33.4] and round(sum(s.values()), 1) == 100.0,
+          "three equal POs: 33.3 / 33.3 / 33.4, not 99.9%")
+    s = P.shares_to_100({f"PO-{i}": 5.0 for i in range(6)})
+    check(sorted(s.values()) == [16.6, 16.6, 16.7, 16.7, 16.7, 16.7], "six equal POs: 100.0%, not 100.2%")
+    s = P.shares_to_100({"PO-A": 7421.45, "PO-B": 9295.0})
+    check(s == {"PO-A": 44.4, "PO-B": 55.6}, "a clean split is left as it was (44.4 / 55.6)")
+    s = P.shares_to_100({"PO-A": 100.0, "PO-B": 300.0, "PO-C": 1.0})
+    check(s == {"PO-A": 24.9, "PO-B": 74.8, "PO-C": 0.3},
+          "the leftover tenth goes to the share that lost the most to rounding (0.2 -> 0.3, not 99.9%)")
+    check(P.shares_to_100({"PO-A": 0.0}) == {} and P.shares_to_100({}) == {}, "no value, no share")
+
+    def ln(po, kind, value):
+        return {"source": "auto", "po": po, "po_list": [po], "vendor": "Nantong", "state": "QLD",
+                "segment": "Retail", "currency": "USD", "flags": [], "assumed_paid": None, "kind": kind,
+                "line_id": f"{po}|{kind}", "amount_auto": value, "due_auto": "2026-12-01",
+                "due_anchor": "eta", "po_value_usd": value, "pct": 100, "container": "TRDU9243264 (20GP)"}
+    lines = [ln("PO-1", "full", 1000.0), ln("PO-2", "full", 1000.0), ln("PO-3", "deposit", 1000.0),
+             ln("PO-3", "balance", 1000.0)]
+    rows, _ = P.merge(lines, {}, [], D("2026-11-24"), 4)
+    by = {r["line_id"]: r for r in rows}
+    per_po = {r["po"]: r["cont_pct"] for r in rows}
+    check(round(sum(per_po.values()), 1) == 100.0 and by["PO-3|deposit"]["cont_pct"] == by["PO-3|balance"]["cont_pct"],
+          "the register's shares of one container add up to 100.0%, deposit and balance alike")
+    check(BR._cell_values(by["PO-1|full"])["_pct"] in (0.333, 0.334), "the exports carry the one-decimal share")
+
+
 def main() -> int:
     for fn in (test_request_days, test_po_list, test_terms, test_merge, test_ledger, test_uat_rules, test_uat_13oct,
                test_oct15, test_uat_16oct, test_oct26, test_oct27, test_oct28, test_oct29, test_oct30, test_nov02,
-               test_nov06, test_nov13, test_nov13_check_point, test_nov16, test_nov17, test_data):
+               test_nov06, test_nov13, test_nov13_check_point, test_nov16, test_nov17, test_nov24, test_data):
         print(fn.__name__)
         fn()
     print(f"\n{'FAILED' if FAILS else 'OK'}: {len(FAILS)} failure(s)")
